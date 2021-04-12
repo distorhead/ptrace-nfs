@@ -19,7 +19,7 @@
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #ifdef HAVE_SYS_XATTR_H
-# include <sys/xattr.h>
+#include <sys/xattr.h>
 #endif
 #include <sys/uio.h>
 
@@ -34,11 +34,12 @@
 
 const struct xlat_data *
 find_xlat_val_ex(const struct xlat_data *items, const char *s, size_t num_items,
-		 unsigned int flags)
+				 unsigned int flags)
 {
-	for (size_t i = 0; i < num_items; i++) {
+	for (size_t i = 0; i < num_items; i++)
+	{
 		if (!(flags & FXL_CASE_SENSITIVE ? strcmp
-						 : strcasecmp)(items[i].str, s))
+										 : strcasecmp)(items[i].str, s))
 			return items + i;
 	}
 
@@ -47,25 +48,24 @@ find_xlat_val_ex(const struct xlat_data *items, const char *s, size_t num_items,
 
 uint64_t
 find_arg_val_(const char *arg, const struct xlat_data *strs, size_t strs_size,
-	       uint64_t default_val, uint64_t not_found)
+			  uint64_t default_val, uint64_t not_found)
 {
 	if (!arg)
 		return default_val;
 
 	const struct xlat_data *res = find_xlat_val_ex(strs, arg, strs_size, 0);
 
-	return  res ? res->val : not_found;
+	return res ? res->val : not_found;
 }
 
-int
-str2timescale_ex(const char *arg, int empty_dflt, int null_dflt,
-		 int *width)
+int str2timescale_ex(const char *arg, int empty_dflt, int null_dflt,
+					 int *width)
 {
 	static const struct xlat_data units[] = {
-		{ 1000000000U | (0ULL << 32), "s" },
-		{ 1000000U    | (3ULL << 32), "ms" },
-		{ 1000U       | (6ULL << 32), "us" },
-		{ 1U          | (9ULL << 32), "ns" },
+		{1000000000U | (0ULL << 32), "s"},
+		{1000000U | (3ULL << 32), "ms"},
+		{1000U | (6ULL << 32), "us"},
+		{1U | (9ULL << 32), "ns"},
 	};
 
 	if (!arg)
@@ -81,20 +81,16 @@ str2timescale_ex(const char *arg, int empty_dflt, int null_dflt,
 	return res & 0xffffffff;
 }
 
-int
-ts_nz(const struct timespec *a)
+int ts_nz(const struct timespec *a)
 {
 	return a->tv_sec || a->tv_nsec;
 }
 
-int
-ts_cmp(const struct timespec *a, const struct timespec *b)
+int ts_cmp(const struct timespec *a, const struct timespec *b)
 {
-	if (a->tv_sec < b->tv_sec
-	    || (a->tv_sec == b->tv_sec && a->tv_nsec < b->tv_nsec))
+	if (a->tv_sec < b->tv_sec || (a->tv_sec == b->tv_sec && a->tv_nsec < b->tv_nsec))
 		return -1;
-	if (a->tv_sec > b->tv_sec
-	    || (a->tv_sec == b->tv_sec && a->tv_nsec > b->tv_nsec))
+	if (a->tv_sec > b->tv_sec || (a->tv_sec == b->tv_sec && a->tv_nsec > b->tv_nsec))
 		return 1;
 	return 0;
 }
@@ -102,41 +98,39 @@ ts_cmp(const struct timespec *a, const struct timespec *b)
 double
 ts_float(const struct timespec *tv)
 {
-	return tv->tv_sec + tv->tv_nsec/1000000000.0;
+	return tv->tv_sec + tv->tv_nsec / 1000000000.0;
 }
 
-void
-ts_add(struct timespec *tv, const struct timespec *a, const struct timespec *b)
+void ts_add(struct timespec *tv, const struct timespec *a, const struct timespec *b)
 {
 	tv->tv_sec = a->tv_sec + b->tv_sec;
 	tv->tv_nsec = a->tv_nsec + b->tv_nsec;
-	if (tv->tv_nsec >= 1000000000) {
+	if (tv->tv_nsec >= 1000000000)
+	{
 		tv->tv_sec++;
 		tv->tv_nsec -= 1000000000;
 	}
 }
 
-void
-ts_sub(struct timespec *tv, const struct timespec *a, const struct timespec *b)
+void ts_sub(struct timespec *tv, const struct timespec *a, const struct timespec *b)
 {
 	tv->tv_sec = a->tv_sec - b->tv_sec;
 	tv->tv_nsec = a->tv_nsec - b->tv_nsec;
-	if (tv->tv_nsec < 0) {
+	if (tv->tv_nsec < 0)
+	{
 		tv->tv_sec--;
 		tv->tv_nsec += 1000000000;
 	}
 }
 
-void
-ts_div(struct timespec *tv, const struct timespec *a, uint64_t n)
+void ts_div(struct timespec *tv, const struct timespec *a, uint64_t n)
 {
 	long long nsec = (a->tv_sec % n * 1000000000LL + a->tv_nsec + n / 2) / n;
 	tv->tv_sec = a->tv_sec / n + nsec / 1000000000;
 	tv->tv_nsec = nsec % 1000000000;
 }
 
-void
-ts_mul(struct timespec *tv, const struct timespec *a, uint64_t n)
+void ts_mul(struct timespec *tv, const struct timespec *a, uint64_t n)
 {
 	long long nsec = a->tv_nsec * n;
 	tv->tv_sec = a->tv_sec * n + nsec / 1000000000;
@@ -155,12 +149,14 @@ ts_max(const struct timespec *a, const struct timespec *b)
 	return ts_cmp(a, b) > 0 ? a : b;
 }
 
-int
-parse_ts(const char *s, struct timespec *t)
+int parse_ts(const char *s, struct timespec *t)
 {
-	enum { NS_IN_S = 1000000000 };
+	enum
+	{
+		NS_IN_S = 1000000000
+	};
 
-	static const char float_accept[] =  "eE.-+0123456789";
+	static const char float_accept[] = "eE.-+0123456789";
 	static const char int_accept[] = "+0123456789";
 
 	size_t float_len = strspn(s, float_accept);
@@ -169,7 +165,8 @@ parse_ts(const char *s, struct timespec *t)
 	double float_val = -1;
 	long long int_val = -1;
 
-	if (float_len > int_len) {
+	if (float_len > int_len)
+	{
 		errno = 0;
 
 		float_val = strtod(s, &endptr);
@@ -178,7 +175,9 @@ parse_ts(const char *s, struct timespec *t)
 			return -1;
 		if (float_val < 0)
 			return -1;
-	} else {
+	}
+	else
+	{
 		int_val = string_to_uint_ex(s, &endptr, LLONG_MAX, "smun");
 
 		if (int_val < 0)
@@ -189,12 +188,16 @@ parse_ts(const char *s, struct timespec *t)
 	if (scale <= 0)
 		return -1;
 
-	if (float_len > int_len) {
+	if (float_len > int_len)
+	{
 		t->tv_sec = float_val / (NS_IN_S / scale);
-		t->tv_nsec = ((uint64_t) ((float_val -
-					   (t->tv_sec * (NS_IN_S / scale)))
-					  * scale)) % NS_IN_S;
-	} else {
+		t->tv_nsec = ((uint64_t)((float_val -
+								  (t->tv_sec * (NS_IN_S / scale))) *
+								 scale)) %
+					 NS_IN_S;
+	}
+	else
+	{
 		t->tv_sec = int_val / (NS_IN_S / scale);
 		t->tv_nsec = (int_val % (NS_IN_S / scale)) * scale;
 	}
@@ -222,30 +225,32 @@ stpcpy(char *dst, const char *src)
  * the bytes are walked in 3,2,1,0, 7,6,5,4, 11,10,9,8 ... sequence.
  * On little-endian machines, word size is immaterial.
  */
-int
-next_set_bit(const void *bit_array, unsigned cur_bit, unsigned size_bits)
+int next_set_bit(const void *bit_array, unsigned cur_bit, unsigned size_bits)
 {
 	const unsigned endian = 1;
-	int little_endian = *(char *) (void *) &endian;
+	int little_endian = *(char *)(void *)&endian;
 
 	const uint8_t *array = bit_array;
 	unsigned pos = cur_bit / 8;
-	unsigned pos_xor_mask = little_endian ? 0 : current_wordsize-1;
+	unsigned pos_xor_mask = little_endian ? 0 : current_wordsize - 1;
 
-	for (;;) {
+	for (;;)
+	{
 		uint8_t bitmask;
 		uint8_t cur_byte;
 
 		if (cur_bit >= size_bits)
 			return -1;
 		cur_byte = array[pos ^ pos_xor_mask];
-		if (cur_byte == 0) {
+		if (cur_byte == 0)
+		{
 			cur_bit = (cur_bit + 8) & (-8);
 			pos++;
 			continue;
 		}
 		bitmask = 1 << (cur_bit & 7);
-		for (;;) {
+		for (;;)
+		{
 			if (cur_byte & bitmask)
 				return cur_bit;
 			cur_bit++;
@@ -268,28 +273,27 @@ unsigned int
 getllval(struct tcb *tcp, unsigned long long *val, unsigned int arg_no)
 {
 #if SIZEOF_KERNEL_LONG_T > 4
-# ifndef current_klongsize
-	if (current_klongsize < SIZEOF_KERNEL_LONG_T) {
-#  if defined(AARCH64) || defined(POWERPC64) || defined(POWERPC64LE)
+#ifndef current_klongsize
+	if (current_klongsize < SIZEOF_KERNEL_LONG_T)
+	{
+#if defined(AARCH64) || defined(POWERPC64) || defined(POWERPC64LE)
 		/* Align arg_no to the next even number. */
 		arg_no = (arg_no + 1) & 0xe;
-#  endif /* AARCH64 || POWERPC64 || POWERPC64LE */
+#endif /* AARCH64 || POWERPC64 || POWERPC64LE */
 		*val = ULONG_LONG(tcp->u_arg[arg_no], tcp->u_arg[arg_no + 1]);
 		arg_no += 2;
-	} else
-# endif /* !current_klongsize */
+	}
+	else
+#endif /* !current_klongsize */
 	{
 		*val = tcp->u_arg[arg_no];
 		arg_no++;
 	}
 #else /* SIZEOF_KERNEL_LONG_T == 4 */
-# if defined __ARM_EABI__	\
-  || defined LINUX_MIPSO32	\
-  || defined POWERPC		\
-  || defined XTENSA
+#if defined __ARM_EABI__ || defined LINUX_MIPSO32 || defined POWERPC || defined XTENSA
 	/* Align arg_no to the next even number. */
 	arg_no = (arg_no + 1) & 0xe;
-# elif defined SH
+#elif defined SH
 	/*
 	 * The SH4 ABI does allow long longs in odd-numbered registers, but
 	 * does not allow them to be split between registers and memory - and
@@ -299,7 +303,7 @@ getllval(struct tcb *tcp, unsigned long long *val, unsigned int arg_no)
 	 */
 	if (arg_no == 3)
 		arg_no++;
-# endif /* __ARM_EABI__ || LINUX_MIPSO32 || POWERPC || XTENSA || SH */
+#endif /* __ARM_EABI__ || LINUX_MIPSO32 || POWERPC || XTENSA || SH */
 	*val = ULONG_LONG(tcp->u_arg[arg_no], tcp->u_arg[arg_no + 1]);
 	arg_no += 2;
 #endif
@@ -335,8 +339,7 @@ print_arg_llu(struct tcb *tcp, unsigned int arg_no)
 	return arg_no;
 }
 
-void
-printaddr64(const uint64_t addr)
+void printaddr64(const uint64_t addr)
 {
 	if (!addr)
 		tprints("NULL");
@@ -344,48 +347,48 @@ printaddr64(const uint64_t addr)
 		tprintf("%#" PRIx64, addr);
 }
 
-#define DEF_PRINTNUM(name, type) \
-bool									\
-printnum_ ## name(struct tcb *const tcp, const kernel_ulong_t addr,	\
-		  const char *const fmt)				\
-{									\
-	type num;							\
-	if (umove_or_printaddr(tcp, addr, &num))			\
-		return false;						\
-	tprints("[");							\
-	tprintf(fmt, num);						\
-	tprints("]");							\
-	return true;							\
-}
+#define DEF_PRINTNUM(name, type)                                          \
+	bool                                                                  \
+		printnum_##name(struct tcb *const tcp, const kernel_ulong_t addr, \
+						const char *const fmt)                            \
+	{                                                                     \
+		type num;                                                         \
+		if (umove_or_printaddr(tcp, addr, &num))                          \
+			return false;                                                 \
+		tprints("[");                                                     \
+		tprintf(fmt, num);                                                \
+		tprints("]");                                                     \
+		return true;                                                      \
+	}
 
-#define DEF_PRINTNUM_ADDR(name, type) \
-bool									\
-printnum_addr_ ## name(struct tcb *tcp, const kernel_ulong_t addr)	\
-{									\
-	type num;							\
-	if (umove_or_printaddr(tcp, addr, &num))			\
-		return false;						\
-	tprints("[");							\
-	printaddr64(num);						\
-	tprints("]");							\
-	return true;							\
-}
+#define DEF_PRINTNUM_ADDR(name, type)                                    \
+	bool                                                                 \
+		printnum_addr_##name(struct tcb *tcp, const kernel_ulong_t addr) \
+	{                                                                    \
+		type num;                                                        \
+		if (umove_or_printaddr(tcp, addr, &num))                         \
+			return false;                                                \
+		tprints("[");                                                    \
+		printaddr64(num);                                                \
+		tprints("]");                                                    \
+		return true;                                                     \
+	}
 
-#define DEF_PRINTPAIR(name, type) \
-bool									\
-printpair_ ## name(struct tcb *const tcp, const kernel_ulong_t addr,	\
-		   const char *const fmt)				\
-{									\
-	type pair[2];							\
-	if (umove_or_printaddr(tcp, addr, &pair))			\
-		return false;						\
-	tprints("[");							\
-	tprintf(fmt, pair[0]);						\
-	tprints(", ");							\
-	tprintf(fmt, pair[1]);						\
-	tprints("]");							\
-	return true;							\
-}
+#define DEF_PRINTPAIR(name, type)                                          \
+	bool                                                                   \
+		printpair_##name(struct tcb *const tcp, const kernel_ulong_t addr, \
+						 const char *const fmt)                            \
+	{                                                                      \
+		type pair[2];                                                      \
+		if (umove_or_printaddr(tcp, addr, &pair))                          \
+			return false;                                                  \
+		tprints("[");                                                      \
+		tprintf(fmt, pair[0]);                                             \
+		tprints(", ");                                                     \
+		tprintf(fmt, pair[1]);                                             \
+		tprints("]");                                                      \
+		return true;                                                       \
+	}
 
 DEF_PRINTNUM(int, int)
 DEF_PRINTNUM_ADDR(int, unsigned int)
@@ -395,8 +398,7 @@ DEF_PRINTNUM(int64, uint64_t)
 DEF_PRINTNUM_ADDR(int64, uint64_t)
 DEF_PRINTPAIR(int64, uint64_t)
 
-bool
-printnum_fd(struct tcb *const tcp, const kernel_ulong_t addr)
+bool printnum_fd(struct tcb *const tcp, const kernel_ulong_t addr)
 {
 	int fd;
 	if (umove_or_printaddr(tcp, addr, &fd))
@@ -407,8 +409,7 @@ printnum_fd(struct tcb *const tcp, const kernel_ulong_t addr)
 	return true;
 }
 
-bool
-printnum_pid(struct tcb *const tcp, const kernel_ulong_t addr, enum pid_type type)
+bool printnum_pid(struct tcb *const tcp, const kernel_ulong_t addr, enum pid_type type)
 {
 	int pid;
 	if (umove_or_printaddr(tcp, addr, &pid))
@@ -432,15 +433,14 @@ printnum_pid(struct tcb *const tcp, const kernel_ulong_t addr, enum pid_type typ
  */
 static const char *
 sprinttime_ex(const long long sec, const unsigned long long part_sec,
-	      const unsigned int max_part_sec, const int width)
+			  const unsigned int max_part_sec, const int width)
 {
-	static char buf[sizeof(int) * 3 * 6 + sizeof(part_sec) * 3
-			+ sizeof("+0000")];
+	static char buf[sizeof(int) * 3 * 6 + sizeof(part_sec) * 3 + sizeof("+0000")];
 
 	if ((sec == 0 && part_sec == 0) || part_sec > max_part_sec)
 		return NULL;
 
-	time_t t = (time_t) sec;
+	time_t t = (time_t)sec;
 	struct tm *tmp = (sec == t) ? localtime(&t) : NULL;
 	if (!tmp)
 		return NULL;
@@ -451,7 +451,7 @@ sprinttime_ex(const long long sec, const unsigned long long part_sec,
 
 	if (part_sec > 0)
 		pos += xsnprintf(buf + pos, sizeof(buf) - pos, ".%0*llu",
-				 width, part_sec);
+						 width, part_sec);
 
 	return strftime(buf + pos, sizeof(buf) - pos, "%z", tmp) ? buf : NULL;
 }
@@ -474,8 +474,7 @@ sprinttime_nsec(long long sec, unsigned long long nsec)
 	return sprinttime_ex(sec, nsec, 999999999, 9);
 }
 
-void
-print_uuid(const unsigned char *uuid)
+void print_uuid(const unsigned char *uuid)
 {
 	const char str[] = {
 		BYTE_HEX_CHARS(uuid[0]),
@@ -498,8 +497,7 @@ print_uuid(const unsigned char *uuid)
 		BYTE_HEX_CHARS(uuid[13]),
 		BYTE_HEX_CHARS(uuid[14]),
 		BYTE_HEX_CHARS(uuid[15]),
-		'\0'
-	};
+		'\0'};
 
 	tprints(str);
 }
@@ -511,7 +509,7 @@ getfdproto(struct tcb *tcp, int fd)
 	size_t bufsize = 256;
 	char buf[bufsize];
 	ssize_t r;
-	char path[sizeof("/proc/%u/fd/%u") + 2 * sizeof(int)*3];
+	char path[sizeof("/proc/%u/fd/%u") + 2 * sizeof(int) * 3];
 
 	if (fd < 0)
 		return SOCK_PROTO_UNKNOWN;
@@ -520,7 +518,8 @@ getfdproto(struct tcb *tcp, int fd)
 	r = getxattr(path, "system.sockprotoname", buf, bufsize - 1);
 	if (r <= 0)
 		return SOCK_PROTO_UNKNOWN;
-	else {
+	else
+	{
 		/*
 		 * This is a protection for the case when the kernel
 		 * side does not append a null byte to the buffer.
@@ -539,10 +538,12 @@ getfdinode(struct tcb *tcp, int fd)
 {
 	char path[PATH_MAX + 1];
 
-	if (getfdpath(tcp, fd, path, sizeof(path)) >= 0) {
+	if (getfdpath(tcp, fd, path, sizeof(path)) >= 0)
+	{
 		const char *str = STR_STRIP_PREFIX(path, "socket:[");
 
-		if (str != path) {
+		if (str != path)
+		{
 			const size_t str_len = strlen(str);
 			if (str_len && str[str_len - 1] == ']')
 				return strtoul(str, NULL, 10);
@@ -559,11 +560,7 @@ printsocket(struct tcb *tcp, int fd, const char *path)
 	size_t len;
 	unsigned long inode;
 
-	return (str != path)
-		&& (len = strlen(str))
-		&& (str[len - 1] == ']')
-		&& (inode = strtoul(str, NULL, 10))
-		&& print_sockaddr_by_inode(tcp, fd, inode);
+	return (str != path) && (len = strlen(str)) && (str[len - 1] == ']') && (inode = strtoul(str, NULL, 10)) && print_sockaddr_by_inode(tcp, fd, inode);
 }
 
 static bool
@@ -574,28 +571,29 @@ printdev(struct tcb *tcp, int fd, const char *path)
 	if (path[0] != '/')
 		return false;
 
-	if (stat_file(path, &st)) {
+	if (stat_file(path, &st))
+	{
 		debug_func_perror_msg("stat(\"%s\")", path);
 		return false;
 	}
 
-	switch (st.st_mode & S_IFMT) {
+	switch (st.st_mode & S_IFMT)
+	{
 	case S_IFBLK:
 	case S_IFCHR:
 		print_quoted_string_ex(path, strlen(path),
-				       QUOTE_OMIT_LEADING_TRAILING_QUOTES,
-				       "<>");
+							   QUOTE_OMIT_LEADING_TRAILING_QUOTES,
+							   "<>");
 		tprintf("<%s %u:%u>",
-			S_ISBLK(st.st_mode)? "block" : "char",
-			major(st.st_rdev), minor(st.st_rdev));
+				S_ISBLK(st.st_mode) ? "block" : "char",
+				major(st.st_rdev), minor(st.st_rdev));
 		return true;
 	}
 
 	return false;
 }
 
-pid_t
-pidfd_get_pid(pid_t pid_of_fd, int fd)
+pid_t pidfd_get_pid(pid_t pid_of_fd, int fd)
 {
 	int proc_pid = 0;
 	translate_pid(NULL, pid_of_fd, PT_TID, &proc_pid);
@@ -613,7 +611,8 @@ pidfd_get_pid(pid_t pid_of_fd, int fd)
 	char *line = NULL;
 	size_t sz = 0;
 	pid_t pid = -1;
-	while (getline(&line, &sz, f) > 0) {
+	while (getline(&line, &sz, f) > 0)
+	{
 		const char *pos = STR_STRIP_PREFIX(line, pid_pfx);
 		if (pos == line)
 			continue;
@@ -644,41 +643,42 @@ printpidfd(pid_t pid_of_fd, int fd, const char *path)
 	return true;
 }
 
-void
-printfd_pid(struct tcb *tcp, pid_t pid, int fd)
+void printfd_pid(struct tcb *tcp, pid_t pid, int fd)
 {
 	char path[PATH_MAX + 1];
-	if (pid > 0 && !number_set_array_is_empty(decode_fd_set, 0)
-	    && getfdpath_pid(pid, fd, path, sizeof(path)) >= 0) {
-		tprintf("%d<", (int) fd);
+	if (pid > 0 && !number_set_array_is_empty(decode_fd_set, 0) && getfdpath_pid(pid, fd, path, sizeof(path)) >= 0)
+	{
+		tprintf("%d<", (int)fd);
 		if (is_number_in_set(DECODE_FD_SOCKET, decode_fd_set) &&
-		    printsocket(tcp, fd, path))
+			printsocket(tcp, fd, path))
 			goto printed;
 		if (is_number_in_set(DECODE_FD_DEV, decode_fd_set) &&
-		    printdev(tcp, fd, path))
+			printdev(tcp, fd, path))
 			goto printed;
 		if (is_number_in_set(DECODE_FD_PIDFD, decode_fd_set) &&
-		    printpidfd(pid, fd, path))
+			printpidfd(pid, fd, path))
 			goto printed;
 		print_quoted_string_ex(path, strlen(path),
-			QUOTE_OMIT_LEADING_TRAILING_QUOTES, "<>");
+							   QUOTE_OMIT_LEADING_TRAILING_QUOTES, "<>");
 
-printed:
+	printed:
 		tprints(">");
-	} else {
+	}
+	else
+	{
 		tprintf("%d", fd);
 	}
 #ifdef ENABLE_SECONTEXT
 	char *context;
-	if (!selinux_getfdcon(pid, fd, &context)) {
+	if (!selinux_getfdcon(pid, fd, &context))
+	{
 		tprintf(" [%s]", context);
 		free(context);
 	}
 #endif
 }
 
-void
-printfd_pid_tracee_ns(struct tcb *tcp, pid_t pid, int fd)
+void printfd_pid_tracee_ns(struct tcb *tcp, pid_t pid, int fd)
 {
 	int strace_pid = translate_pid(tcp, pid, PT_TGID, NULL);
 	printfd_pid(tcp, strace_pid, fd);
@@ -701,11 +701,10 @@ printfd_pid_tracee_ns(struct tcb *tcp, pid_t pid, int fd)
  * Returns 0 if QUOTE_0_TERMINATED is set and NUL was seen, 1 otherwise.
  * Note that if QUOTE_0_TERMINATED is not set, always returns 1.
  */
-int
-string_quote(const char *instr, char *outstr, const unsigned int size,
-	     const unsigned int style, const char *escape_chars)
+int string_quote(const char *instr, char *outstr, const unsigned int size,
+				 const unsigned int style, const char *escape_chars)
 {
-	const unsigned char *ustr = (const unsigned char *) instr;
+	const unsigned char *ustr = (const unsigned char *)instr;
 	char *s = outstr;
 	unsigned int i;
 	int usehex, c, eol;
@@ -717,26 +716,32 @@ string_quote(const char *instr, char *outstr, const unsigned int size,
 		eol = 0x100; /* this can never match a char */
 
 	usehex = 0;
-	if ((xflag > 1) || (style & QUOTE_FORCE_HEX)) {
+	if ((xflag > 1) || (style & QUOTE_FORCE_HEX))
+	{
 		usehex = 1;
-	} else if (xflag) {
+	}
+	else if (xflag)
+	{
 		/* Check for presence of symbol which require
 		   to hex-quote the whole string. */
-		for (i = 0; i < size; ++i) {
+		for (i = 0; i < size; ++i)
+		{
 			c = ustr[i];
 			/* Check for NUL-terminated string. */
 			if (c == eol)
 				break;
 
 			/* Force hex unless c is printable or whitespace */
-			if (c > 0x7e) {
+			if (c > 0x7e)
+			{
 				usehex = 1;
 				break;
 			}
 			/* In ASCII isspace is only these chars: "\t\n\v\f\r".
 			 * They happen to have ASCII codes 9,10,11,12,13.
 			 */
-			if (c < ' ' && (unsigned)(c - 9) >= 5) {
+			if (c < ' ' && (unsigned)(c - 9) >= 5)
+			{
 				usehex = 1;
 				break;
 			}
@@ -748,9 +753,11 @@ string_quote(const char *instr, char *outstr, const unsigned int size,
 	if (!(style & QUOTE_OMIT_LEADING_TRAILING_QUOTES))
 		*s++ = '\"';
 
-	if (usehex) {
+	if (usehex)
+	{
 		/* Hex-quote the whole string. */
-		for (i = 0; i < size; ++i) {
+		for (i = 0; i < size; ++i)
+		{
 			c = ustr[i];
 			/* Check for NUL-terminated string. */
 			if (c == eol)
@@ -763,16 +770,19 @@ string_quote(const char *instr, char *outstr, const unsigned int size,
 		goto string_ended;
 	}
 
-	for (i = 0; i < size; ++i) {
+	for (i = 0; i < size; ++i)
+	{
 		c = ustr[i];
 		/* Check for NUL-terminated string. */
 		if (c == eol)
 			goto asciz_ended;
 		if ((i == (size - 1)) &&
-		    (style & QUOTE_OMIT_TRAILING_0) && (c == '\0'))
+			(style & QUOTE_OMIT_TRAILING_0) && (c == '\0'))
 			goto asciz_ended;
-		switch (c) {
-		case '\"': case '\\':
+		switch (c)
+		{
+		case '\"':
+		case '\\':
 			*s++ = '\\';
 			*s++ = c;
 			break;
@@ -802,21 +812,25 @@ string_quote(const char *instr, char *outstr, const unsigned int size,
 			if (printable && escape_chars)
 				printable = !strchr(escape_chars, c);
 
-			if (printable) {
+			if (printable)
+			{
 				*s++ = c;
-			} else {
+			}
+			else
+			{
 				/* Print \octal */
 				*s++ = '\\';
-				if (i + 1 < size
-				    && ustr[i + 1] >= '0'
-				    && ustr[i + 1] <= '7'
-				) {
+				if (i + 1 < size && ustr[i + 1] >= '0' && ustr[i + 1] <= '7')
+				{
 					/* Print \ooo */
 					*s++ = '0' + (c >> 6);
 					*s++ = '0' + ((c >> 3) & 0x7);
-				} else {
+				}
+				else
+				{
 					/* Print \[[o]o]o */
-					if ((c >> 3) != 0) {
+					if ((c >> 3) != 0)
+					{
 						if ((c >> 6) != 0)
 							*s++ = '0' + (c >> 6);
 						*s++ = '0' + ((c >> 3) & 0x7);
@@ -827,7 +841,7 @@ string_quote(const char *instr, char *outstr, const unsigned int size,
 		}
 	}
 
- string_ended:
+string_ended:
 	if (!(style & QUOTE_OMIT_LEADING_TRAILING_QUOTES))
 		*s++ = '\"';
 	if (style & QUOTE_EMIT_COMMENT)
@@ -835,7 +849,8 @@ string_quote(const char *instr, char *outstr, const unsigned int size,
 	*s = '\0';
 
 	/* Return zero if we printed entire ASCIZ string (didn't truncate it) */
-	if (style & QUOTE_0_TERMINATED && ustr[i] == '\0') {
+	if (style & QUOTE_0_TERMINATED && ustr[i] == '\0')
+	{
 		/* We didn't see NUL yet (otherwise we'd jump to 'asciz_ended')
 		 * but next char is NUL.
 		 */
@@ -844,7 +859,7 @@ string_quote(const char *instr, char *outstr, const unsigned int size,
 
 	return 1;
 
- asciz_ended:
+asciz_ended:
 	if (!(style & QUOTE_OMIT_LEADING_TRAILING_QUOTES))
 		*s++ = '\"';
 	if (style & QUOTE_EMIT_COMMENT)
@@ -855,7 +870,7 @@ string_quote(const char *instr, char *outstr, const unsigned int size,
 }
 
 #ifndef ALLOCA_CUTOFF
-# define ALLOCA_CUTOFF	4032
+#define ALLOCA_CUTOFF 4032
 #endif
 #define use_alloca(n) ((n) <= ALLOCA_CUTOFF)
 
@@ -872,9 +887,8 @@ string_quote(const char *instr, char *outstr, const unsigned int size,
  * Returns 0 if QUOTE_0_TERMINATED is set and NUL was seen, 1 otherwise.
  * Note that if QUOTE_0_TERMINATED is not set, always returns 1.
  */
-int
-print_quoted_string_ex(const char *str, unsigned int size,
-		       const unsigned int style, const char *escape_chars)
+int print_quoted_string_ex(const char *str, unsigned int size,
+						   const unsigned int style, const char *escape_chars)
 {
 	char *buf;
 	char *outstr;
@@ -885,23 +899,29 @@ print_quoted_string_ex(const char *str, unsigned int size,
 		--size;
 
 	alloc_size = 4 * size;
-	if (alloc_size / 4 != size) {
+	if (alloc_size / 4 != size)
+	{
 		error_func_msg("requested %u bytes exceeds %u bytes limit",
-			       size, -1U / 4);
+					   size, -1U / 4);
 		tprint_unavailable();
 		return -1;
 	}
 	alloc_size += 1 + (style & QUOTE_OMIT_LEADING_TRAILING_QUOTES ? 0 : 2) +
-		(style & QUOTE_EMIT_COMMENT ? 7 : 0);
+				  (style & QUOTE_EMIT_COMMENT ? 7 : 0);
 
-	if (use_alloca(alloc_size)) {
+	if (use_alloca(alloc_size))
+	{
 		outstr = alloca(alloc_size);
 		buf = NULL;
-	} else {
+	}
+	else
+	{
 		outstr = buf = malloc(alloc_size);
-		if (!buf) {
+		if (!buf)
+		{
 			error_func_msg("memory exhausted when tried to allocate"
-				       " %u bytes", alloc_size);
+						   " %u bytes",
+						   alloc_size);
 			tprint_unavailable();
 			return -1;
 		}
@@ -916,7 +936,7 @@ print_quoted_string_ex(const char *str, unsigned int size,
 
 inline int
 print_quoted_string(const char *str, unsigned int size,
-		    const unsigned int style)
+					const unsigned int style)
 {
 	return print_quoted_string_ex(str, size, style, NULL);
 }
@@ -927,8 +947,7 @@ print_quoted_string(const char *str, unsigned int size,
  *
  * Returns 0 if NUL was seen, 1 otherwise.
  */
-int
-print_quoted_cstring(const char *str, unsigned int size)
+int print_quoted_cstring(const char *str, unsigned int size)
 {
 	int unterminated =
 		print_quoted_string(str, size, QUOTE_0_TERMINATED);
@@ -939,19 +958,38 @@ print_quoted_cstring(const char *str, unsigned int size)
 	return unterminated;
 }
 
+int extract_path(struct tcb *const tcp, const kernel_ulong_t addr, unsigned int dst_max, char *dst)
+{
+	int nul_seen;
+	int n = dst_max - 1;
+
+	/* Fetch one byte more to find out whether path length > n. */
+	nul_seen = umovestr(tcp, addr, n + 1, dst);
+	if (nul_seen < 0)
+	{
+		return -1;
+	}
+	else
+	{
+		dst[n++] = !nul_seen;
+	}
+
+	return nul_seen;
+}
+
 /*
  * Print path string specified by address `addr' and length `n'.
  * If path length exceeds `n', append `...' to the output.
  *
  * Returns the result of umovenstr.
  */
-int
-printpathn(struct tcb *const tcp, const kernel_ulong_t addr, unsigned int n)
+int printpathn(struct tcb *const tcp, const kernel_ulong_t addr, unsigned int n)
 {
 	char path[PATH_MAX];
 	int nul_seen;
 
-	if (!addr) {
+	if (!addr)
+	{
 		tprints("NULL");
 		return -1;
 	}
@@ -964,13 +1002,15 @@ printpathn(struct tcb *const tcp, const kernel_ulong_t addr, unsigned int n)
 	nul_seen = umovestr(tcp, addr, n + 1, path);
 	if (nul_seen < 0)
 		printaddr(addr);
-	else {
+	else
+	{
 		path[n++] = !nul_seen;
 		print_quoted_cstring(path, n);
 
 #ifdef ENABLE_SECONTEXT
 		char *context;
-		if (nul_seen && !selinux_getfilecon(tcp, path, &context)) {
+		if (nul_seen && !selinux_getfilecon(tcp, path, &context))
+		{
 			tprintf(" [%s]", context);
 			free(context);
 		}
@@ -980,8 +1020,7 @@ printpathn(struct tcb *const tcp, const kernel_ulong_t addr, unsigned int n)
 	return nul_seen;
 }
 
-int
-printpath(struct tcb *const tcp, const kernel_ulong_t addr)
+int printpath(struct tcb *const tcp, const kernel_ulong_t addr)
 {
 	/* Size must correspond to char path[] size in printpathn */
 	return printpathn(tcp, addr, PATH_MAX - 1);
@@ -998,9 +1037,8 @@ printpath(struct tcb *const tcp, const kernel_ulong_t addr)
  * Returns the result of umovenstr if style has QUOTE_0_TERMINATED,
  * or the result of umoven otherwise.
  */
-int
-printstr_ex(struct tcb *const tcp, const kernel_ulong_t addr,
-	    const kernel_ulong_t len, const unsigned int user_style)
+int printstr_ex(struct tcb *const tcp, const kernel_ulong_t addr,
+				const kernel_ulong_t len, const unsigned int user_style)
 {
 	static char *str;
 	static char *outstr;
@@ -1010,12 +1048,14 @@ printstr_ex(struct tcb *const tcp, const kernel_ulong_t addr,
 	int rc;
 	int ellipsis;
 
-	if (!addr) {
+	if (!addr)
+	{
 		tprints("NULL");
 		return -1;
 	}
 	/* Allocate static buffers if they are not allocated yet. */
-	if (!str) {
+	if (!str)
+	{
 		const unsigned int outstr_size =
 			4 * max_strlen + /* for quotes and NUL */ 3;
 		/*
@@ -1037,7 +1077,8 @@ printstr_ex(struct tcb *const tcp, const kernel_ulong_t addr,
 	else
 		rc = umoven(tcp, addr, size, str);
 
-	if (rc < 0) {
+	if (rc < 0)
+	{
 		printaddr(addr);
 		return rc;
 	}
@@ -1050,10 +1091,7 @@ printstr_ex(struct tcb *const tcp, const kernel_ulong_t addr,
 	/* If string_quote didn't see NUL and (it was supposed to be ASCIZ str
 	 * or we were requested to print more than -s NUM chars)...
 	 */
-	ellipsis = string_quote(str, outstr, size, style, NULL)
-		   && len
-		   && ((style & (QUOTE_0_TERMINATED | QUOTE_EXPECT_TRAILING_0))
-		       || len > max_strlen);
+	ellipsis = string_quote(str, outstr, size, style, NULL) && len && ((style & (QUOTE_0_TERMINATED | QUOTE_EXPECT_TRAILING_0)) || len > max_strlen);
 
 	tprints(outstr);
 	if (ellipsis)
@@ -1062,13 +1100,12 @@ printstr_ex(struct tcb *const tcp, const kernel_ulong_t addr,
 	return rc;
 }
 
-bool
-print_nonzero_bytes(struct tcb *const tcp,
-		    void (*const prefix_fun)(void),
-		    const kernel_ulong_t start_addr,
-		    const unsigned int start_offs,
-		    const unsigned int total_len,
-		    const unsigned int style)
+bool print_nonzero_bytes(struct tcb *const tcp,
+						 void (*const prefix_fun)(void),
+						 const kernel_ulong_t start_addr,
+						 const unsigned int start_offs,
+						 const unsigned int total_len,
+						 const unsigned int style)
 {
 	if (start_offs >= total_len)
 		return false;
@@ -1079,9 +1116,11 @@ print_nonzero_bytes(struct tcb *const tcp,
 
 	char *str = malloc(len);
 
-	if (!str) {
+	if (!str)
+	{
 		error_func_msg("memory exhausted when tried to allocate"
-                               " %u bytes", len);
+					   " %u bytes",
+					   len);
 		prefix_fun();
 		tprint_unavailable();
 		return true;
@@ -1089,12 +1128,17 @@ print_nonzero_bytes(struct tcb *const tcp,
 
 	bool ret = true;
 
-	if (umoven(tcp, addr, len, str)) {
+	if (umoven(tcp, addr, len, str))
+	{
 		prefix_fun();
 		tprint_unavailable();
-	} else if (is_filled(str, 0, len)) {
+	}
+	else if (is_filled(str, 0, len))
+	{
 		ret = false;
-	} else {
+	}
+	else
+	{
 		prefix_fun();
 		tprintf("/* bytes %u..%u */ ", start_offs, total_len - 1);
 
@@ -1108,45 +1152,59 @@ print_nonzero_bytes(struct tcb *const tcp,
 	return ret;
 }
 
-void
-dumpiov_upto(struct tcb *const tcp, const int len, const kernel_ulong_t addr,
-	     kernel_ulong_t data_size)
+void dumpiov_upto(struct tcb *const tcp, const int len, const kernel_ulong_t addr,
+				  kernel_ulong_t data_size)
 {
 #if ANY_WORDSIZE_LESS_THAN_KERNEL_LONG
-	union {
-		struct { uint32_t base; uint32_t len; } *iov32;
-		struct { uint64_t base; uint64_t len; } *iov64;
+	union
+	{
+		struct
+		{
+			uint32_t base;
+			uint32_t len;
+		} * iov32;
+		struct
+		{
+			uint64_t base;
+			uint64_t len;
+		} * iov64;
 	} iovu;
-# define iov iovu.iov64
-# define sizeof_iov \
-	(current_wordsize == 4 ? (unsigned int) sizeof(*iovu.iov32)	\
-			       : (unsigned int) sizeof(*iovu.iov64))
-# define iov_iov_base(i) \
-	(current_wordsize == 4 ? (uint64_t) iovu.iov32[i].base : iovu.iov64[i].base)
-# define iov_iov_len(i) \
-	(current_wordsize == 4 ? (uint64_t) iovu.iov32[i].len : iovu.iov64[i].len)
+#define iov iovu.iov64
+#define sizeof_iov                                             \
+	(current_wordsize == 4 ? (unsigned int)sizeof(*iovu.iov32) \
+						   : (unsigned int)sizeof(*iovu.iov64))
+#define iov_iov_base(i) \
+	(current_wordsize == 4 ? (uint64_t)iovu.iov32[i].base : iovu.iov64[i].base)
+#define iov_iov_len(i) \
+	(current_wordsize == 4 ? (uint64_t)iovu.iov32[i].len : iovu.iov64[i].len)
 #else
 	struct iovec *iov;
-# define sizeof_iov ((unsigned int) sizeof(*iov))
-# define iov_iov_base(i) ptr_to_kulong(iov[i].iov_base)
-# define iov_iov_len(i) iov[i].iov_len
+#define sizeof_iov ((unsigned int)sizeof(*iov))
+#define iov_iov_base(i) ptr_to_kulong(iov[i].iov_base)
+#define iov_iov_len(i) iov[i].iov_len
 #endif
 	int i;
 	unsigned int size = sizeof_iov * len;
-	if (size / sizeof_iov != (unsigned int) len) {
+	if (size / sizeof_iov != (unsigned int)len)
+	{
 		error_func_msg("requested %u iovec elements exceeds"
-			       " %u iovec limit", len, -1U / sizeof_iov);
+					   " %u iovec limit",
+					   len, -1U / sizeof_iov);
 		return;
 	}
 
 	iov = malloc(size);
-	if (!iov) {
+	if (!iov)
+	{
 		error_func_msg("memory exhausted when tried to allocate"
-			       " %u bytes", size);
+					   " %u bytes",
+					   size);
 		return;
 	}
-	if (umoven(tcp, addr, size, iov) >= 0) {
-		for (i = 0; i < len; i++) {
+	if (umoven(tcp, addr, size, iov) >= 0)
+	{
+		for (i = 0; i < len; i++)
+		{
 			kernel_ulong_t iov_len = iov_iov_len(i);
 			if (iov_len > data_size)
 				iov_len = data_size;
@@ -1166,12 +1224,12 @@ dumpiov_upto(struct tcb *const tcp, const int len, const kernel_ulong_t addr,
 #undef iov
 }
 
-void
-dumpstr(struct tcb *const tcp, const kernel_ulong_t addr,
-	const kernel_ulong_t len)
+void dumpstr(struct tcb *const tcp, const kernel_ulong_t addr,
+			 const kernel_ulong_t len)
 {
 	/* xx xx xx xx xx xx xx xx  xx xx xx xx xx xx xx xx  1234567890123456 */
-	enum {
+	enum
+	{
 		HEX_BIT = 4,
 
 		DUMPSTR_GROUP_BYTES = 8,
@@ -1180,7 +1238,7 @@ dumpstr(struct tcb *const tcp, const kernel_ulong_t addr,
 
 		/** Width of formatted dump in characters.  */
 		DUMPSTR_WIDTH_CHARS = DUMPSTR_WIDTH_BYTES +
-			sizeof("xx") * DUMPSTR_WIDTH_BYTES + DUMPSTR_GROUPS,
+							  sizeof("xx") * DUMPSTR_WIDTH_BYTES + DUMPSTR_GROUPS,
 
 		DUMPSTR_GROUP_MASK = DUMPSTR_GROUP_BYTES - 1,
 		DUMPSTR_BYTES_MASK = DUMPSTR_WIDTH_BYTES - 1,
@@ -1193,16 +1251,18 @@ dumpstr(struct tcb *const tcp, const kernel_ulong_t addr,
 	};
 
 	static_assert(!(DUMPSTR_BUF_MAXSZ % DUMPSTR_WIDTH_BYTES),
-		      "Maximum internal buffer size should be divisible "
-		      "by amount of bytes dumped per line");
+				  "Maximum internal buffer size should be divisible "
+				  "by amount of bytes dumped per line");
 	static_assert(!(DUMPSTR_GROUP_BYTES & DUMPSTR_GROUP_MASK),
-		      "DUMPSTR_GROUP_BYTES is not power of 2");
+				  "DUMPSTR_GROUP_BYTES is not power of 2");
 	static_assert(!(DUMPSTR_WIDTH_BYTES & DUMPSTR_BYTES_MASK),
-		      "DUMPSTR_WIDTH_BYTES is not power of 2");
+				  "DUMPSTR_WIDTH_BYTES is not power of 2");
 
-	if (len > len + DUMPSTR_WIDTH_BYTES || addr + len < addr) {
+	if (len > len + DUMPSTR_WIDTH_BYTES || addr + len < addr)
+	{
 		debug_func_msg("len %" PRI_klu " at addr %#" PRI_klx
-			       " is too big, skipped", len, addr);
+					   " is too big, skipped",
+					   len, addr);
 		return;
 	}
 
@@ -1212,13 +1272,16 @@ dumpstr(struct tcb *const tcp, const kernel_ulong_t addr,
 	const kernel_ulong_t alloc_size =
 		MIN(ROUNDUP(len, DUMPSTR_WIDTH_BYTES), DUMPSTR_BUF_MAXSZ);
 
-	if (strsize < alloc_size) {
+	if (strsize < alloc_size)
+	{
 		free(str);
 		str = malloc(alloc_size);
-		if (!str) {
+		if (!str)
+		{
 			strsize = 0;
 			error_func_msg("memory exhausted when tried to allocate"
-				       " %" PRI_klu " bytes", alloc_size);
+						   " %" PRI_klu " bytes",
+						   alloc_size);
 			return;
 		}
 		strsize = alloc_size;
@@ -1229,47 +1292,54 @@ dumpstr(struct tcb *const tcp, const kernel_ulong_t addr,
 	 * it this way in order to avoid ilog2_64 call most of the time.
 	 */
 	const int offs_chars = len > (1 << (DUMPSTR_OFFS_MIN_CHARS * HEX_BIT))
-		? 1 + ilog2_klong(len - 1) / HEX_BIT : DUMPSTR_OFFS_MIN_CHARS;
+							   ? 1 + ilog2_klong(len - 1) / HEX_BIT
+							   : DUMPSTR_OFFS_MIN_CHARS;
 	kernel_ulong_t i = 0;
 	const unsigned char *src;
 
-	while (i < len) {
+	while (i < len)
+	{
 		/*
 		 * It is important to overwrite all the byte values, as we
 		 * re-use the buffer in order to avoid its re-initialisation.
 		 */
 		static char outbuf[] = {
 			[0 ... DUMPSTR_WIDTH_CHARS - 1] = ' ',
-			'\0'
-		};
+			'\0'};
 		char *dst = outbuf;
 
 		/* Fetching data from tracee.  */
-		if (!i || (i % DUMPSTR_BUF_MAXSZ) == 0) {
+		if (!i || (i % DUMPSTR_BUF_MAXSZ) == 0)
+		{
 			kernel_ulong_t fetch_size = MIN(len - i, alloc_size);
 
-			if (umoven(tcp, addr + i, fetch_size, str) < 0) {
+			if (umoven(tcp, addr + i, fetch_size, str) < 0)
+			{
 				/*
 				 * Don't silently abort if we have printed
 				 * something already.
 				 */
 				if (i)
 					tprintf(" | <Cannot fetch %" PRI_klu
-						" byte%s from pid %d"
-						" @%#" PRI_klx ">\n",
-						fetch_size,
-						fetch_size == 1 ? "" : "s",
-						tcp->pid, addr + i);
+							" byte%s from pid %d"
+							" @%#" PRI_klx ">\n",
+							fetch_size,
+							fetch_size == 1 ? "" : "s",
+							tcp->pid, addr + i);
 				return;
 			}
 			src = str;
 		}
 
 		/* hex dump */
-		do {
-			if (i < len) {
+		do
+		{
+			if (i < len)
+			{
 				dst = sprint_byte_hex(dst, *src);
-			} else {
+			}
+			else
+			{
 				*dst++ = ' ';
 				*dst++ = ' ';
 			}
@@ -1283,43 +1353,44 @@ dumpstr(struct tcb *const tcp, const kernel_ulong_t addr,
 		/* ASCII dump */
 		i -= DUMPSTR_WIDTH_BYTES;
 		src -= DUMPSTR_WIDTH_BYTES;
-		do {
-			if (i < len) {
+		do
+		{
+			if (i < len)
+			{
 				if (is_print(*src))
 					*dst++ = *src;
 				else
 					*dst++ = '.';
-			} else {
+			}
+			else
+			{
 				*dst++ = ' ';
 			}
 			src++;
 		} while (++i & DUMPSTR_BYTES_MASK);
 
 		tprintf(" | %0*" PRI_klx "  %s |\n",
-			offs_chars, i - DUMPSTR_WIDTH_BYTES, outbuf);
+				offs_chars, i - DUMPSTR_WIDTH_BYTES, outbuf);
 	}
 }
 
-bool
-tfetch_mem64(struct tcb *const tcp, const uint64_t addr,
-	     const unsigned int len, void *const our_addr)
+bool tfetch_mem64(struct tcb *const tcp, const uint64_t addr,
+				  const unsigned int len, void *const our_addr)
 {
 	return addr && verbose(tcp) &&
-	       (entering(tcp) || !syserror(tcp)) &&
-	       !umoven(tcp, addr, len, our_addr);
+		   (entering(tcp) || !syserror(tcp)) &&
+		   !umoven(tcp, addr, len, our_addr);
 }
 
-bool
-tfetch_mem64_ignore_syserror(struct tcb *const tcp, const uint64_t addr,
-			     const unsigned int len, void *const our_addr)
+bool tfetch_mem64_ignore_syserror(struct tcb *const tcp, const uint64_t addr,
+								  const unsigned int len, void *const our_addr)
 {
 	return addr && verbose(tcp) &&
-	       !umoven(tcp, addr, len, our_addr);
+		   !umoven(tcp, addr, len, our_addr);
 }
 
-int
-umoven_or_printaddr64(struct tcb *const tcp, const uint64_t addr,
-		      const unsigned int len, void *const our_addr)
+int umoven_or_printaddr64(struct tcb *const tcp, const uint64_t addr,
+						  const unsigned int len, void *const our_addr)
 {
 	if (tfetch_mem64(tcp, addr, len, our_addr))
 		return 0;
@@ -1327,11 +1398,10 @@ umoven_or_printaddr64(struct tcb *const tcp, const uint64_t addr,
 	return -1;
 }
 
-int
-umoven_or_printaddr64_ignore_syserror(struct tcb *const tcp,
-				      const uint64_t addr,
-				      const unsigned int len,
-				      void *const our_addr)
+int umoven_or_printaddr64_ignore_syserror(struct tcb *const tcp,
+										  const uint64_t addr,
+										  const unsigned int len,
+										  void *const our_addr)
 {
 	if (tfetch_mem64_ignore_syserror(tcp, addr, len, our_addr))
 		return 0;
@@ -1339,65 +1409,58 @@ umoven_or_printaddr64_ignore_syserror(struct tcb *const tcp,
 	return -1;
 }
 
-bool
-print_int8_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
-			void *data)
+bool print_int8_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
+							 void *data)
 {
-	tprintf("%" PRId8, *(int8_t *) elem_buf);
+	tprintf("%" PRId8, *(int8_t *)elem_buf);
 
 	return true;
 }
 
-bool
-print_uint8_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
-			 void *data)
+bool print_uint8_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
+							  void *data)
 {
-	tprintf("%" PRIu8, *(uint8_t *) elem_buf);
+	tprintf("%" PRIu8, *(uint8_t *)elem_buf);
 
 	return true;
 }
 
-bool
-print_int32_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
-			 void *data)
+bool print_int32_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
+							  void *data)
 {
-	tprintf("%" PRId32, *(int32_t *) elem_buf);
+	tprintf("%" PRId32, *(int32_t *)elem_buf);
 
 	return true;
 }
 
-bool
-print_uint32_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
-			  void *data)
+bool print_uint32_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
+							   void *data)
 {
-	tprintf("%" PRIu32, *(uint32_t *) elem_buf);
+	tprintf("%" PRIu32, *(uint32_t *)elem_buf);
 
 	return true;
 }
 
-bool
-print_uint64_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
-			  void *data)
+bool print_uint64_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
+							   void *data)
 {
-	tprintf("%" PRIu64, *(uint64_t *) elem_buf);
+	tprintf("%" PRIu64, *(uint64_t *)elem_buf);
 
 	return true;
 }
 
-bool
-print_xint32_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
-			  void *data)
+bool print_xint32_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
+							   void *data)
 {
-	tprintf("%#" PRIx32, *(uint32_t *) elem_buf);
+	tprintf("%#" PRIx32, *(uint32_t *)elem_buf);
 
 	return true;
 }
 
-bool
-print_xint64_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
-			  void *data)
+bool print_xint64_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
+							   void *data)
 {
-	tprintf("%#" PRIx64, *(uint64_t *) elem_buf);
+	tprintf("%#" PRIx64, *(uint64_t *)elem_buf);
 
 	return true;
 }
@@ -1433,25 +1496,26 @@ print_xint64_array_member(struct tcb *tcp, void *elem_buf, size_t elem_size,
  * This function returns true only if tfetch_mem_func has returned true
  * at least once.
  */
-bool
-print_array_ex(struct tcb *const tcp,
-	       const kernel_ulong_t start_addr,
-	       const size_t nmemb,
-	       void *elem_buf,
-	       const size_t elem_size,
-	       tfetch_mem_fn tfetch_mem_func,
-	       print_fn print_func,
-	       void *const opaque_data,
-	       unsigned int flags,
-	       const struct xlat *index_xlat,
-	       const char *index_dflt)
+bool print_array_ex(struct tcb *const tcp,
+					const kernel_ulong_t start_addr,
+					const size_t nmemb,
+					void *elem_buf,
+					const size_t elem_size,
+					tfetch_mem_fn tfetch_mem_func,
+					print_fn print_func,
+					void *const opaque_data,
+					unsigned int flags,
+					const struct xlat *index_xlat,
+					const char *index_dflt)
 {
-	if (!start_addr) {
+	if (!start_addr)
+	{
 		tprints("NULL");
 		return false;
 	}
 
-	if (!nmemb) {
+	if (!nmemb)
+	{
 		tprints("[]");
 		return false;
 	}
@@ -1459,7 +1523,8 @@ print_array_ex(struct tcb *const tcp,
 	const size_t size = nmemb * elem_size;
 	const kernel_ulong_t end_addr = start_addr + size;
 
-	if (end_addr <= start_addr || size / elem_size != nmemb) {
+	if (end_addr <= start_addr || size / elem_size != nmemb)
+	{
 		if (tfetch_mem_func)
 			printaddr(start_addr);
 		else
@@ -1468,63 +1533,76 @@ print_array_ex(struct tcb *const tcp,
 	}
 
 	const kernel_ulong_t abbrev_end =
-		(abbrev(tcp) && max_strlen < nmemb) ?
-			start_addr + elem_size * max_strlen : end_addr;
+		(abbrev(tcp) && max_strlen < nmemb) ? start_addr + elem_size * max_strlen : end_addr;
 	kernel_ulong_t cur;
 	kernel_ulong_t idx = 0;
 	enum xlat_style xlat_style = flags & XLAT_STYLE_MASK;
 	bool truncated = false;
 
-	for (cur = start_addr; cur < end_addr; cur += elem_size, idx++) {
+	for (cur = start_addr; cur < end_addr; cur += elem_size, idx++)
+	{
 		if (cur != start_addr)
 			tprints(", ");
 
-		if (tfetch_mem_func) {
-			if (!tfetch_mem_func(tcp, cur, elem_size, elem_buf)) {
+		if (tfetch_mem_func)
+		{
+			if (!tfetch_mem_func(tcp, cur, elem_size, elem_buf))
+			{
 				if (cur == start_addr)
 					printaddr(cur);
-				else {
+				else
+				{
 					tprints("...");
 					printaddr_comment(cur);
 					truncated = true;
 				}
 				break;
 			}
-		} else {
-			elem_buf = (void *) (uintptr_t) cur;
+		}
+		else
+		{
+			elem_buf = (void *)(uintptr_t)cur;
 		}
 
 		if (cur == start_addr)
 			tprints("[");
 
-		if (cur >= abbrev_end) {
+		if (cur >= abbrev_end)
+		{
 			tprints("...");
 			cur = end_addr;
 			truncated = true;
 			break;
 		}
 
-		if (flags & PAF_PRINT_INDICES) {
+		if (flags & PAF_PRINT_INDICES)
+		{
 			tprint_array_index_begin();
 
-			if (!index_xlat) {
+			if (!index_xlat)
+			{
 				print_xlat_ex(idx, NULL, xlat_style);
-			} else {
+			}
+			else
+			{
 				printxval_ex(idx ? NULL : index_xlat, idx,
-					     index_dflt, xlat_style);
+							 index_dflt, xlat_style);
 			}
 
 			tprint_array_index_end();
 		}
 
-		if (!print_func(tcp, elem_buf, elem_size, opaque_data)) {
+		if (!print_func(tcp, elem_buf, elem_size, opaque_data))
+		{
 			cur = end_addr;
 			break;
 		}
 	}
 
-	if ((cur != start_addr) || !tfetch_mem_func) {
-		if ((flags & PAF_ARRAY_TRUNCATED) && !truncated) {
+	if ((cur != start_addr) || !tfetch_mem_func)
+	{
+		if ((flags & PAF_ARRAY_TRUNCATED) && !truncated)
+		{
 			if (cur != start_addr)
 				tprints(", ");
 
@@ -1537,8 +1615,7 @@ print_array_ex(struct tcb *const tcp,
 	return cur >= end_addr;
 }
 
-int
-printargs(struct tcb *tcp)
+int printargs(struct tcb *tcp)
 {
 	const int n = n_args(tcp);
 	int i;
@@ -1547,41 +1624,38 @@ printargs(struct tcb *tcp)
 	return RVAL_DECODED;
 }
 
-int
-printargs_u(struct tcb *tcp)
+int printargs_u(struct tcb *tcp)
 {
 	const int n = n_args(tcp);
 	int i;
 	for (i = 0; i < n; ++i)
 		tprintf("%s%u", i ? ", " : "",
-			(unsigned int) tcp->u_arg[i]);
+				(unsigned int)tcp->u_arg[i]);
 	return RVAL_DECODED;
 }
 
-int
-printargs_d(struct tcb *tcp)
+int printargs_d(struct tcb *tcp)
 {
 	const int n = n_args(tcp);
 	int i;
 	for (i = 0; i < n; ++i)
 		tprintf("%s%d", i ? ", " : "",
-			(int) tcp->u_arg[i]);
+				(int)tcp->u_arg[i]);
 	return RVAL_DECODED;
 }
 
 /* Print abnormal high bits of a kernel_ulong_t value. */
-void
-print_abnormal_hi(const kernel_ulong_t val)
+void print_abnormal_hi(const kernel_ulong_t val)
 {
-	if (current_klongsize > 4) {
-		const unsigned int hi = (unsigned int) ((uint64_t) val >> 32);
+	if (current_klongsize > 4)
+	{
+		const unsigned int hi = (unsigned int)((uint64_t)val >> 32);
 		if (hi)
 			tprintf("%#x<<32|", hi);
 	}
 }
 
-int
-read_int_from_file(const char *const fname, int *const pvalue)
+int read_int_from_file(const char *const fname, int *const pvalue)
 {
 	const int fd = open_file(fname, O_RDONLY);
 	if (fd < 0)
@@ -1593,7 +1667,8 @@ read_int_from_file(const char *const fname, int *const pvalue)
 	int saved_errno = errno;
 	close(fd);
 
-	if (n < 0) {
+	if (n < 0)
+	{
 		errno = saved_errno;
 		return -1;
 	}
@@ -1604,14 +1679,15 @@ read_int_from_file(const char *const fname, int *const pvalue)
 	lval = strtol(buf, &endptr, 10);
 	if (!endptr || (*endptr && '\n' != *endptr)
 #if INT_MAX < LONG_MAX
-	    || lval > INT_MAX || lval < INT_MIN
+		|| lval > INT_MAX || lval < INT_MIN
 #endif
-	    || ERANGE == errno) {
+		|| ERANGE == errno)
+	{
 		if (!errno)
 			errno = EINVAL;
 		return -1;
 	}
 
-	*pvalue = (int) lval;
+	*pvalue = (int)lval;
 	return 0;
 }
