@@ -17,8 +17,10 @@
 #include <signal.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/user.h>
+#include <sys/syscall.h>
 #ifdef HAVE_PATHS_H
-# include <paths.h>
+#include <paths.h>
 #endif
 #include <getopt.h>
 #include <pwd.h>
@@ -47,6 +49,28 @@ extern char **environ;
 extern int optind;
 extern char *optarg;
 
+#ifdef __x86_64__
+#define user_syscall_nr orig_rax
+#define user_arg0 rdi
+#define user_arg1 rsi
+#define user_arg2 rdx
+#define user_arg3 r10
+#define user_arg4 r8
+#define user_arg5 r9
+#define user_ip rip
+#define user_ax rax
+#else
+#define user_syscall_nr orig_eax
+#define user_arg0 ebx
+#define user_arg1 ecx
+#define user_arg2 edx
+#define user_arg3 esi
+#define user_arg4 edi
+#define user_arg5 ebp
+#define user_ip eip
+#define user_ax eax
+#endif
+
 #ifdef ENABLE_STACKTRACE
 /* if this is true do the stack trace for every system call */
 bool stack_trace_enabled;
@@ -56,11 +80,11 @@ bool stack_trace_enabled;
 
 /* Glue for systems without a MMU that cannot provide fork() */
 #if !defined(HAVE_FORK)
-# undef NOMMU_SYSTEM
-# define NOMMU_SYSTEM 1
+#undef NOMMU_SYSTEM
+#define NOMMU_SYSTEM 1
 #endif
 #if NOMMU_SYSTEM
-# define fork() vfork()
+#define fork() vfork()
 #endif
 
 const unsigned int syscall_trap_sig = SIGTRAP | 0x80;
@@ -68,11 +92,10 @@ const unsigned int syscall_trap_sig = SIGTRAP | 0x80;
 cflag_t cflag = CFLAG_NONE;
 bool followfork;
 bool output_separately;
-unsigned int ptrace_setoptions = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXEC
-				 | PTRACE_O_TRACEEXIT;
+unsigned int ptrace_setoptions = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT;
 static struct xlat_data xflag_str[] = {
-	{ HEXSTR_NON_ASCII,	"non-ascii" },
-	{ HEXSTR_ALL,		"all" },
+	{HEXSTR_NON_ASCII, "non-ascii"},
+	{HEXSTR_ALL, "all"},
 };
 unsigned int xflag;
 bool debug_flag;
@@ -91,11 +114,12 @@ static int rflag_width = 6;
 static bool print_pid_pfx;
 
 /* -I n */
-enum {
-	INTR_NOT_SET        = 0,
-	INTR_ANYWHERE       = 1, /* don't block/ignore any signals */
-	INTR_WHILE_WAIT     = 2, /* block fatal signals while decoding syscall. default */
-	INTR_NEVER          = 3, /* block fatal signals. default if '-o FILE PROG' */
+enum
+{
+	INTR_NOT_SET = 0,
+	INTR_ANYWHERE = 1,		 /* don't block/ignore any signals */
+	INTR_WHILE_WAIT = 2,	 /* block fatal signals while decoding syscall. default */
+	INTR_NEVER = 3,			 /* block fatal signals. default if '-o FILE PROG' */
 	INTR_BLOCK_TSTP_TOO = 4, /* block fatal signals and SIGTSTP (^Z); default if -D */
 	NUM_INTR_OPTS
 };
@@ -103,20 +127,21 @@ static int opt_intr;
 /* We play with signal mask only if this mode is active: */
 #define interactive (opt_intr == INTR_WHILE_WAIT)
 
-enum {
-	DAEMONIZE_NONE        = 0,
-	DAEMONIZE_GRANDCHILD  = 1,
-	DAEMONIZE_NEW_PGROUP  = 2,
+enum
+{
+	DAEMONIZE_NONE = 0,
+	DAEMONIZE_GRANDCHILD = 1,
+	DAEMONIZE_NEW_PGROUP = 2,
 	DAEMONIZE_NEW_SESSION = 3,
 
 	DAEMONIZE_OPTS_GUARD__,
-	MAX_DAEMONIZE_OPTS    = DAEMONIZE_OPTS_GUARD__ - 1
+	MAX_DAEMONIZE_OPTS = DAEMONIZE_OPTS_GUARD__ - 1
 };
 static struct xlat_data daemonize_str[] = {
-	{ DAEMONIZE_GRANDCHILD,		"grandchild" },
-	{ DAEMONIZE_NEW_PGROUP,		"pgroup" },
-	{ DAEMONIZE_NEW_PGROUP,		"pgrp" },
-	{ DAEMONIZE_NEW_SESSION,	"session" },
+	{DAEMONIZE_GRANDCHILD, "grandchild"},
+	{DAEMONIZE_NEW_PGROUP, "pgroup"},
+	{DAEMONIZE_NEW_PGROUP, "pgrp"},
+	{DAEMONIZE_NEW_SESSION, "session"},
 };
 /*
  * daemonized_tracer supports -D option.
@@ -162,11 +187,12 @@ static bool open_append;
 struct tcb *printing_tcp;
 static struct tcb *current_tcp;
 
-struct tcb_wait_data {
+struct tcb_wait_data
+{
 	enum trace_event te; /**< Event passed to dispatch_event() */
-	int status;          /**< status, returned by wait4() */
-	unsigned long msg;   /**< Value returned by PTRACE_GETEVENTMSG */
-	siginfo_t si;        /**< siginfo, returned by PTRACE_GETSIGINFO */
+	int status;			 /**< status, returned by wait4() */
+	unsigned long msg;	 /**< Value returned by PTRACE_GETEVENTMSG */
+	siginfo_t si;		 /**< siginfo, returned by PTRACE_GETSIGINFO */
 };
 
 static struct tcb **tcbtab;
@@ -175,7 +201,6 @@ static size_t tcbtabsize;
 
 static struct tcb_wait_data *tcb_wait_tab;
 static size_t tcb_wait_tab_size;
-
 
 #ifndef HAVE_PROGRAM_INVOCATION_NAME
 char *program_invocation_name;
@@ -198,17 +223,18 @@ static void timer_sighandler(int);
 
 #ifndef HAVE_STRERROR
 
-# if !HAVE_DECL_SYS_ERRLIST
+#if !HAVE_DECL_SYS_ERRLIST
 extern int sys_nerr;
 extern char *sys_errlist[];
-# endif
+#endif
 
 const char *
 strerror(int err_no)
 {
-	static char buf[sizeof("Unknown error %d") + sizeof(int)*3];
+	static char buf[sizeof("Unknown error %d") + sizeof(int) * 3];
 
-	if (err_no < 1 || err_no >= sys_nerr) {
+	if (err_no < 1 || err_no >= sys_nerr)
+	{
 		xsprintf(buf, "Unknown error %d", err_no);
 		return buf;
 	}
@@ -228,18 +254,18 @@ print_version(void)
 		" stack-demangle"
 #endif
 #if SUPPORTED_PERSONALITIES > 1
-# if defined HAVE_M32_MPERS
+#if defined HAVE_M32_MPERS
 		" m32-mpers"
-# else
+#else
 		" no-m32-mpers"
-# endif
+#endif
 #endif /* SUPPORTED_PERSONALITIES > 1 */
 #if SUPPORTED_PERSONALITIES > 2
-# if defined HAVE_MX32_MPERS
+#if defined HAVE_MX32_MPERS
 		" mx32-mpers"
-# else
+#else
 		" no-mx32-mpers"
-# endif
+#endif
 #endif /* SUPPORTED_PERSONALITIES > 2 */
 #ifdef ENABLE_SECONTEXT
 		" secontext"
@@ -247,33 +273,32 @@ print_version(void)
 		"";
 
 	printf("%s -- version %s\n"
-	       "Copyright (c) 1991-%s The strace developers <%s>.\n"
-	       "This is free software; see the source for copying conditions.  There is NO\n"
-	       "warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n",
-	       PACKAGE_NAME, PACKAGE_VERSION, COPYRIGHT_YEAR, PACKAGE_URL);
+		   "Copyright (c) 1991-%s The strace developers <%s>.\n"
+		   "This is free software; see the source for copying conditions.  There is NO\n"
+		   "warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n",
+		   PACKAGE_NAME, PACKAGE_VERSION, COPYRIGHT_YEAR, PACKAGE_URL);
 	printf("\nOptional features enabled:%s\n",
-	       features[0] ? features : " (none)");
+		   features[0] ? features : " (none)");
 }
 
 static void
 usage(void)
 {
 #ifdef ENABLE_STACKTRACE
-# define K_OPT "k"
+#define K_OPT "k"
 #else
-# define K_OPT ""
+#define K_OPT ""
 #endif
 #ifdef ENABLE_SECONTEXT
-# define SECONTEXT_OPT "[--secontext[=full]]\n"
+#define SECONTEXT_OPT "[--secontext[=full]]\n"
 #else
-# define SECONTEXT_OPT ""
+#define SECONTEXT_OPT ""
 #endif
 
 	printf("\
 Usage: strace [-ACdffhi" K_OPT "qqrtttTvVwxxyyzZ] [-I N] [-b execve] [-e EXPR]...\n\
               [-a COLUMN] [-o FILE] [-s STRSIZE] [-X FORMAT] [-O OVERHEAD]\n\
-              [-S SORTBY] [-P PATH]... [-p PID]... [-U COLUMNS] [--seccomp-bpf]\n"\
-              SECONTEXT_OPT "\
+              [-S SORTBY] [-P PATH]... [-p PID]... [-U COLUMNS] [--seccomp-bpf]\n" SECONTEXT_OPT "\
               { -p PID | [-DDD] [-E VAR=VAL]... [-u USERNAME] PROG [ARGS] }\n\
    or: strace -c[dfwzZ] [-I N] [-b execve] [-e EXPR]... [-O OVERHEAD]\n\
               [-S SORTBY] [-P PATH]... [-p PID]... [-U COLUMNS] [--seccomp-bpf]\n\
@@ -362,12 +387,12 @@ Output format:\n\
                  print instruction pointer at time of syscall\n\
 "
 #ifdef ENABLE_STACKTRACE
-"\
+		   "\
   -k, --stack-traces\n\
                  obtain stack trace between each syscall\n\
 "
 #endif
-"\
+		   "\
   -n, --syscall-number\n\
                  print syscall number\n\
   -o FILE, --output=FILE\n\
@@ -416,12 +441,12 @@ Output format:\n\
                  descriptors in addition to paths\n\
 "
 #ifdef ENABLE_SECONTEXT
-"\
+		   "\
   --secontext[=full]\n\
                  print SELinux contexts (type only unless 'full' is specified)\n\
 "
 #endif
-"\
+		   "\
 \n\
 Statistics:\n\
   -c, --summary-only\n\
@@ -465,10 +490,11 @@ Miscellaneous:\n\
   --seccomp-bpf  enable seccomp-bpf filtering\n\
   -V, --version  print version\n\
 "
-/* ancient, no one should use it
+		   /* ancient, no one should use it
 -F -- attempt to follow vforks (deprecated, use -f)\n\
  */
-, DEFAULT_ACOLUMN, DEFAULT_STRLEN, DEFAULT_SORTBY);
+		   ,
+		   DEFAULT_ACOLUMN, DEFAULT_STRLEN, DEFAULT_SORTBY);
 	exit(0);
 
 #undef K_OPT
@@ -477,7 +503,8 @@ Miscellaneous:\n\
 void ATTRIBUTE_NORETURN
 die(void)
 {
-	if (strace_tracer_pid == getpid()) {
+	if (strace_tracer_pid == getpid())
+	{
 		cleanup(0);
 		exit(1);
 	}
@@ -488,10 +515,13 @@ die(void)
 static void
 error_opt_arg(int opt, const struct option *lopt, const char *arg)
 {
-	if (lopt && lopt->name) {
+	if (lopt && lopt->name)
+	{
 		error_msg_and_help("invalid --%s argument: '%s'",
-				   lopt->name, arg);
-	} else {
+						   lopt->name, arg);
+	}
+	else
+	{
 		error_msg_and_help("invalid -%c argument: '%s'", opt, arg);
 	}
 }
@@ -504,8 +534,8 @@ ptrace_attach_or_seize(int pid)
 	int r;
 	if (!use_seize)
 		return ptrace_attach_cmd = "PTRACE_ATTACH",
-		       ptrace(PTRACE_ATTACH, pid, 0L, 0L);
-	r = ptrace(PTRACE_SEIZE, pid, 0L, (unsigned long) ptrace_setoptions);
+			   ptrace(PTRACE_ATTACH, pid, 0L, 0L);
+	r = ptrace(PTRACE_SEIZE, pid, 0L, (unsigned long)ptrace_setoptions);
 	if (r)
 		return ptrace_attach_cmd = "PTRACE_SEIZE", r;
 	r = ptrace(PTRACE_INTERRUPT, pid, 0L, 0L);
@@ -537,7 +567,7 @@ ptrace_restart(const unsigned int op, struct tcb *const tcp, unsigned int sig)
 	int err;
 
 	errno = 0;
-	ptrace(op, tcp->pid, 0L, (unsigned long) sig);
+	ptrace(op, tcp->pid, 0L, (unsigned long)sig);
 	err = errno;
 	if (!err || err == ESRCH)
 		return 0;
@@ -551,14 +581,15 @@ ptrace_restart(const unsigned int op, struct tcb *const tcp, unsigned int sig)
 	 * 10252 died after we retrieved syscall exit data,
 	 * but before we tried to restart it. Log looks ugly.
 	 */
-	if (current_tcp && current_tcp->curcol != 0) {
+	if (current_tcp && current_tcp->curcol != 0)
+	{
 		tprintf(" <Cannot restart pid %d with ptrace(%s): %s>\n",
-			tcp->pid, ptrace_op_str(op), strerror(err));
+				tcp->pid, ptrace_op_str(op), strerror(err));
 		line_ended();
 	}
 	errno = err;
 	perror_msg("ptrace(%s,pid:%d,sig:%u)",
-		   ptrace_op_str(op), tcp->pid, sig);
+			   ptrace_op_str(op), tcp->pid, sig);
 	return -1;
 }
 
@@ -568,7 +599,8 @@ set_cloexec_flag(int fd)
 	int flags, newflags;
 
 	flags = fcntl_fd(fd, F_GETFD);
-	if (flags < 0) {
+	if (flags < 0)
+	{
 		/* Can happen only if fd is bad.
 		 * Should never happen: if it does, we have a bug
 		 * in the caller. Therefore we just abort
@@ -594,7 +626,8 @@ swap_uid(void)
 {
 	int euid = geteuid(), uid = getuid();
 
-	if (euid != uid && setreuid(euid, uid) < 0) {
+	if (euid != uid && setreuid(euid, uid) < 0)
+	{
 		perror_msg_and_die("setreuid");
 	}
 }
@@ -616,7 +649,7 @@ strace_fopen(const char *path)
 static int popen_pid;
 
 #ifndef _PATH_BSHELL
-# define _PATH_BSHELL "/bin/sh"
+#define _PATH_BSHELL "/bin/sh"
 #endif
 
 /*
@@ -641,10 +674,12 @@ strace_popen(const char *command)
 	if (pid < 0)
 		perror_msg_and_die("vfork");
 
-	if (pid == 0) {
+	if (pid == 0)
+	{
 		/* child */
 		close(fds[1]);
-		if (fds[0] != 0) {
+		if (fds[0] != 0)
+		{
 			if (dup2(fds[0], 0))
 				perror_msg_and_die("dup2");
 			close(fds[0]);
@@ -664,7 +699,7 @@ strace_popen(const char *command)
 }
 
 static void
-outf_perror(const struct tcb * const tcp)
+outf_perror(const struct tcb *const tcp)
 {
 	if (tcp->outf == stderr)
 		return;
@@ -680,18 +715,20 @@ ATTRIBUTE_FORMAT((printf, 1, 0))
 static void
 tvprintf(const char *const fmt, va_list args)
 {
-	if (current_tcp) {
+	if (current_tcp)
+	{
 		int n = vfprintf(current_tcp->outf, fmt, args);
-		if (n < 0) {
+		if (n < 0)
+		{
 			/* very unlikely due to vfprintf buffering */
 			outf_perror(current_tcp);
-		} else
+		}
+		else
 			current_tcp->curcol += n;
 	}
 }
 
-void
-tprintf(const char *fmt, ...)
+void tprintf(const char *fmt, ...)
 {
 	va_list args;
 	va_start(args, fmt);
@@ -700,15 +737,17 @@ tprintf(const char *fmt, ...)
 }
 
 #ifndef HAVE_FPUTS_UNLOCKED
-# define fputs_unlocked fputs
+#define fputs_unlocked fputs
 #endif
 
-void
-tprints(const char *str)
+void tprints(const char *str)
 {
-	if (current_tcp) {
+	printf(">> tprints(%s)\n", str);
+	if (current_tcp)
+	{
 		int n = fputs_unlocked(str, current_tcp->outf);
-		if (n >= 0) {
+		if (n >= 0)
+		{
 			current_tcp->curcol += strlen(str);
 			return;
 		}
@@ -717,15 +756,13 @@ tprints(const char *str)
 	}
 }
 
-void
-tprints_comment(const char *const str)
+void tprints_comment(const char *const str)
 {
 	if (str && *str)
 		tprintf(" /* %s */", str);
 }
 
-void
-tprintf_comment(const char *fmt, ...)
+void tprintf_comment(const char *fmt, ...)
 {
 	if (!fmt || !*fmt)
 		return;
@@ -745,31 +782,30 @@ flush_tcp_output(const struct tcb *const tcp)
 		outf_perror(tcp);
 }
 
-void
-line_ended(void)
+void line_ended(void)
 {
-	if (current_tcp) {
+	if (current_tcp)
+	{
 		current_tcp->curcol = 0;
 		flush_tcp_output(current_tcp);
 	}
-	if (printing_tcp) {
+	if (printing_tcp)
+	{
 		printing_tcp->curcol = 0;
 		printing_tcp = NULL;
 	}
 }
 
-void
-set_current_tcp(const struct tcb *tcp)
+void set_current_tcp(const struct tcb *tcp)
 {
-	current_tcp = (struct tcb *) tcp;
+	current_tcp = (struct tcb *)tcp;
 
 	/* Sync current_personality and stuff */
 	if (current_tcp)
 		set_personality(current_tcp->currpers);
 }
 
-void
-printleader(struct tcb *tcp)
+void printleader(struct tcb *tcp)
 {
 	/* If -ff, "previous tcb we printed" is always the same as current,
 	 * because we have per-tcb output files.
@@ -777,10 +813,12 @@ printleader(struct tcb *tcp)
 	if (output_separately)
 		printing_tcp = tcp;
 
-	if (printing_tcp) {
+	if (printing_tcp)
+	{
 		set_current_tcp(printing_tcp);
 		if (!tcp->staged_output_data && printing_tcp->curcol != 0 &&
-		    (!output_separately || printing_tcp == tcp)) {
+			(!output_separately || printing_tcp == tcp))
+		{
 			/*
 			 * case 1: we have a shared log (i.e. not -ff), and last line
 			 * wasn't finished (same or different tcb, doesn't matter).
@@ -803,13 +841,15 @@ printleader(struct tcb *tcp)
 
 #ifdef ENABLE_SECONTEXT
 	char *context;
-	if (!selinux_getpidcon(tcp, &context)) {
+	if (!selinux_getpidcon(tcp, &context))
+	{
 		tprintf("[%s] ", context);
 		free(context);
 	}
 #endif
 
-	if (tflag_format) {
+	if (tflag_format)
+	{
 		struct timespec ts;
 		clock_gettime(CLOCK_REALTIME, &ts);
 
@@ -820,15 +860,16 @@ printleader(struct tcb *tcp)
 		if (tm)
 			strftime(str, sizeof(str), tflag_format, tm);
 		else
-			xsprintf(str, "%lld", (long long) local);
+			xsprintf(str, "%lld", (long long)local);
 		if (tflag_width)
 			tprintf("%s.%0*ld ", str, tflag_width,
-				(long) ts.tv_nsec / tflag_scale);
+					(long)ts.tv_nsec / tflag_scale);
 		else
 			tprintf("%s ", str);
 	}
 
-	if (rflag) {
+	if (rflag)
+	{
 		struct timespec ts;
 		clock_gettime(CLOCK_MONOTONIC, &ts);
 
@@ -840,10 +881,11 @@ printleader(struct tcb *tcp)
 		ts_sub(&dts, &ts, &ots);
 		ots = ts;
 
-		tprintf("%s%6ld", tflag_format ? "(+" : "", (long) dts.tv_sec);
-		if (rflag_width) {
+		tprintf("%s%6ld", tflag_format ? "(+" : "", (long)dts.tv_sec);
+		if (rflag_width)
+		{
 			tprintf(".%0*ld",
-				rflag_width, (long) dts.tv_nsec / rflag_scale);
+					rflag_width, (long)dts.tv_nsec / rflag_scale);
 		}
 		tprints(tflag_format ? ") " : " ");
 	}
@@ -855,8 +897,7 @@ printleader(struct tcb *tcp)
 		print_instruction_pointer(tcp);
 }
 
-void
-tabto(void)
+void tabto(void)
 {
 	if (current_tcp->curcol < acolumn)
 		tprints(acolumn_spaces + current_tcp->curcol);
@@ -871,7 +912,8 @@ after_successful_attach(struct tcb *tcp, const unsigned int flags)
 {
 	tcp->flags |= TCB_ATTACHED | TCB_STARTUP | flags;
 	tcp->outf = shared_log; /* if not -ff mode, the same file is for all */
-	if (output_separately) {
+	if (output_separately)
+	{
 		char name[PATH_MAX];
 		xsprintf(name, "%s.%u", outfname, tcp->pid);
 		tcp->outf = strace_fopen(name);
@@ -901,7 +943,7 @@ expand_tcbtab(void)
 	newtcbs = xcalloc(tcbtabsize - old_tcbtabsize, sizeof(newtcbs[0]));
 
 	for (tcb_ptr = tcbtab + old_tcbtabsize;
-	    tcb_ptr < tcbtab + tcbtabsize; tcb_ptr++, newtcbs++)
+		 tcb_ptr < tcbtab + tcbtabsize; tcb_ptr++, newtcbs++)
 		*tcb_ptr = newtcbs;
 }
 
@@ -914,9 +956,11 @@ alloctcb(int pid)
 	if (nprocs == tcbtabsize)
 		expand_tcbtab();
 
-	for (i = 0; i < tcbtabsize; i++) {
+	for (i = 0; i < tcbtabsize; i++)
+	{
 		tcp = tcbtab[i];
-		if (!tcp->pid) {
+		if (!tcp->pid)
+		{
 			memset(tcp, 0, sizeof(*tcp));
 			list_init(&tcp->wait_list);
 			tcp->pid = pid;
@@ -928,7 +972,7 @@ alloctcb(int pid)
 #endif
 			nprocs++;
 			debug_msg("new tcb for pid %d, active tcbs:%d",
-				  tcp->pid, nprocs);
+					  tcp->pid, nprocs);
 			return tcp;
 		}
 	}
@@ -941,9 +985,8 @@ get_tcb_priv_data(const struct tcb *tcp)
 	return tcp->_priv_data;
 }
 
-int
-set_tcb_priv_data(struct tcb *tcp, void *const priv_data,
-		  void (*const free_priv_data)(void *))
+int set_tcb_priv_data(struct tcb *tcp, void *const priv_data,
+					  void (*const free_priv_data)(void *))
 {
 	if (tcp->_priv_data)
 		return -1;
@@ -954,11 +997,12 @@ set_tcb_priv_data(struct tcb *tcp, void *const priv_data,
 	return 0;
 }
 
-void
-free_tcb_priv_data(struct tcb *tcp)
+void free_tcb_priv_data(struct tcb *tcp)
 {
-	if (tcp->_priv_data) {
-		if (tcp->_free_priv_data) {
+	if (tcp->_priv_data)
+	{
+		if (tcp->_free_priv_data)
+		{
 			tcp->_free_priv_data(tcp->_priv_data);
 			tcp->_free_priv_data = NULL;
 		}
@@ -972,12 +1016,14 @@ droptcb(struct tcb *tcp)
 	if (tcp->pid == 0)
 		return;
 
-	if (cflag && debug_flag) {
+	if (cflag && debug_flag)
+	{
 		struct timespec dt;
 
 		ts_sub(&dt, &tcp->stime, &tcp->atime);
 		debug_func_msg("pid %d: %.9f seconds of system time spent "
-			       "since attach", tcp->pid, ts_float(&dt));
+					   "since attach",
+					   tcp->pid, ts_float(&dt));
 	}
 
 	int p;
@@ -1001,18 +1047,23 @@ droptcb(struct tcb *tcp)
 	nprocs--;
 	debug_msg("dropped tcb for pid %d, %d remain", tcp->pid, nprocs);
 
-	if (tcp->outf) {
+	if (tcp->outf)
+	{
 		bool publish = true;
-		if (!is_complete_set(status_set, NUMBER_OF_STATUSES)) {
+		if (!is_complete_set(status_set, NUMBER_OF_STATUSES))
+		{
 			publish = is_number_in_set(STATUS_DETACHED, status_set);
 			strace_close_memstream(tcp, publish);
 		}
 
-		if (output_separately) {
+		if (output_separately)
+		{
 			if (tcp->curcol != 0 && publish)
 				fprintf(tcp->outf, " <detached ...>\n");
 			fclose(tcp->outf);
-		} else {
+		}
+		else
+		{
 			if (printing_tcp == tcp && tcp->curcol != 0 && publish)
 				fprintf(tcp->outf, " <detached ...>\n");
 			flush_tcp_output(tcp);
@@ -1057,17 +1108,20 @@ detach(struct tcb *tcp)
 		goto wait_loop;
 
 	error = ptrace(PTRACE_DETACH, tcp->pid, 0, 0);
-	if (!error) {
+	if (!error)
+	{
 		/* On a clear day, you can see forever. */
 		goto drop;
 	}
-	if (errno != ESRCH) {
+	if (errno != ESRCH)
+	{
 		/* Shouldn't happen. */
 		perror_func_msg("ptrace(PTRACE_DETACH,%u)", tcp->pid);
 		goto drop;
 	}
 	/* ESRCH: process is either not stopped or doesn't exist. */
-	if (my_tkill(tcp->pid, 0) < 0) {
+	if (my_tkill(tcp->pid, 0) < 0)
+	{
 		if (errno != ESRCH)
 			/* Shouldn't happen. */
 			perror_func_msg("tkill(%u,0)", tcp->pid);
@@ -1075,7 +1129,8 @@ detach(struct tcb *tcp)
 		goto drop;
 	}
 	/* Process is not stopped, need to stop it. */
-	if (use_seize) {
+	if (use_seize)
+	{
 		/*
 		 * With SEIZE, tracee can be in group-stop already.
 		 * In this state sending it another SIGSTOP does nothing.
@@ -1087,7 +1142,9 @@ detach(struct tcb *tcp)
 			goto wait_loop;
 		if (errno != ESRCH)
 			perror_func_msg("ptrace(PTRACE_INTERRUPT,%u)", tcp->pid);
-	} else {
+	}
+	else
+	{
 		error = my_tkill(tcp->pid, SIGSTOP);
 		if (!error)
 			goto wait_loop;
@@ -1097,15 +1154,17 @@ detach(struct tcb *tcp)
 	/* Either process doesn't exist, or some weird error. */
 	goto drop;
 
- wait_loop:
+wait_loop:
 	/* We end up here in three cases:
 	 * 1. We sent PTRACE_INTERRUPT (use_seize case)
 	 * 2. We sent SIGSTOP (!use_seize)
 	 * 3. Attach SIGSTOP was already pending (TCB_IGNORE_ONE_SIGSTOP set)
 	 */
-	for (;;) {
+	for (;;)
+	{
 		unsigned int sig;
-		if (waitpid(tcp->pid, &status, __WALL) < 0) {
+		if (waitpid(tcp->pid, &status, __WALL) < 0)
+		{
 			if (errno == EINTR)
 				continue;
 			/*
@@ -1116,7 +1175,8 @@ detach(struct tcb *tcp)
 			perror_func_msg("waitpid(%u)", tcp->pid);
 			break;
 		}
-		if (!WIFSTOPPED(status)) {
+		if (!WIFSTOPPED(status))
+		{
 			/*
 			 * Tracee exited or was killed by signal.
 			 * We shouldn't normally reach this place:
@@ -1131,10 +1191,12 @@ detach(struct tcb *tcp)
 		}
 		sig = WSTOPSIG(status);
 		debug_msg("detach wait: event:%d sig:%d",
-			  (unsigned) status >> 16, sig);
-		if (use_seize) {
+				  (unsigned)status >> 16, sig);
+		if (use_seize)
+		{
 			unsigned event = (unsigned)status >> 16;
-			if (event == PTRACE_EVENT_STOP /*&& sig == SIGTRAP*/) {
+			if (event == PTRACE_EVENT_STOP /*&& sig == SIGTRAP*/)
+			{
 				/*
 				 * sig == SIGTRAP: PTRACE_INTERRUPT stop.
 				 * sig == other: process was already stopped
@@ -1164,7 +1226,8 @@ detach(struct tcb *tcp)
 		}
 		/* Note: this check has to be after use_seize check */
 		/* (else, in use_seize case SIGSTOP will be mistreated) */
-		if (sig == SIGSTOP) {
+		if (sig == SIGSTOP)
+		{
 			/* Detach, suppressing SIGSTOP */
 			ptrace_restart(PTRACE_DETACH, tcp, 0);
 			break;
@@ -1173,7 +1236,8 @@ detach(struct tcb *tcp)
 			sig = 0;
 		/* Can't detach just yet, may need to wait for SIGSTOP */
 		error = ptrace_restart(PTRACE_CONT, tcp, sig);
-		if (error < 0) {
+		if (error < 0)
+		{
 			/* Should not happen.
 			 * Note: ptrace_restart returns 0 on ESRCH, so it's not it.
 			 * ptrace_restart already emitted error message.
@@ -1182,9 +1246,8 @@ detach(struct tcb *tcp)
 		}
 	}
 
- drop:
-	if (!is_number_in_set(QUIET_ATTACH, quiet_set)
-	    && (tcp->flags & TCB_ATTACHED))
+drop:
+	if (!is_number_in_set(QUIET_ATTACH, quiet_set) && (tcp->flags & TCB_ATTACHED))
 		error_msg("Process %u detached", tcp->pid);
 
 	droptcb(tcp);
@@ -1193,7 +1256,8 @@ detach(struct tcb *tcp)
 static void
 process_opt_p_list(char *opt)
 {
-	while (*opt) {
+	while (*opt)
+	{
 		/*
 		 * We accept -p PID,PID; -p "`pidof PROG`"; -p "`pgrep PROG`".
 		 * pidof uses space as delim, pgrep uses newline. :(
@@ -1204,10 +1268,12 @@ process_opt_p_list(char *opt)
 
 		*delim = '\0';
 		pid = string_to_uint(opt);
-		if (pid <= 0) {
+		if (pid <= 0)
+		{
 			error_msg_and_die("Invalid process id: '%s'", opt);
 		}
-		if (pid == strace_tracer_pid) {
+		if (pid == strace_tracer_pid)
+		{
 			error_msg_and_die("I'm sorry, I can't let you do that, Dave.");
 		}
 		*delim = c;
@@ -1221,9 +1287,10 @@ process_opt_p_list(char *opt)
 static void
 attach_tcb(struct tcb *const tcp)
 {
-	if (ptrace_attach_or_seize(tcp->pid) < 0) {
+	if (ptrace_attach_or_seize(tcp->pid) < 0)
+	{
 		perror_msg("attach: ptrace(%s, %d)",
-			   ptrace_attach_cmd, tcp->pid);
+				   ptrace_attach_cmd, tcp->pid);
 		droptcb(tcp);
 		return;
 	}
@@ -1237,11 +1304,13 @@ attach_tcb(struct tcb *const tcp)
 	unsigned int ntid = 0, nerr = 0;
 
 	if (followfork && tcp->pid != strace_child &&
-	    xsprintf(procdir, task_path, get_proc_pid(tcp)) > 0 &&
-	    (dir = opendir(procdir)) != NULL) {
+		xsprintf(procdir, task_path, get_proc_pid(tcp)) > 0 &&
+		(dir = opendir(procdir)) != NULL)
+	{
 		struct_dirent *de;
 
-		while ((de = read_dir(dir)) != NULL) {
+		while ((de = read_dir(dir)) != NULL)
+		{
 			if (de->d_fileno == 0)
 				continue;
 
@@ -1250,29 +1319,31 @@ attach_tcb(struct tcb *const tcp)
 				continue;
 
 			++ntid;
-			if (ptrace_attach_or_seize(tid) < 0) {
+			if (ptrace_attach_or_seize(tid) < 0)
+			{
 				++nerr;
 				debug_perror_msg("attach: ptrace(%s, %d)",
-						 ptrace_attach_cmd, tid);
+								 ptrace_attach_cmd, tid);
 				continue;
 			}
 
 			after_successful_attach(alloctcb(tid),
-						TCB_GRABBED | post_attach_sigstop);
+									TCB_GRABBED | post_attach_sigstop);
 			debug_msg("attach to pid %d succeeded", tid);
 		}
 
 		closedir(dir);
 	}
 
-	if (!is_number_in_set(QUIET_ATTACH, quiet_set)) {
+	if (!is_number_in_set(QUIET_ATTACH, quiet_set))
+	{
 		if (ntid > nerr)
 			error_msg("Process %u attached"
-				  " with %u threads",
-				  tcp->pid, ntid - nerr + 1);
+					  " with %u threads",
+					  tcp->pid, ntid - nerr + 1);
 		else
 			error_msg("Process %u attached",
-				  tcp->pid);
+					  tcp->pid);
 	}
 }
 
@@ -1283,12 +1354,14 @@ startup_attach(void)
 	unsigned int tcbi;
 	struct tcb *tcp;
 
-	if (daemonized_tracer) {
+	if (daemonized_tracer)
+	{
 		pid_t pid = fork();
 		if (pid < 0)
 			perror_func_msg_and_die("fork");
 
-		if (pid) { /* parent */
+		if (pid)
+		{ /* parent */
 			/*
 			 * Wait for grandchild to attach to straced process
 			 * (grandparent). Grandchild SIGKILLs us after it attached.
@@ -1302,7 +1375,8 @@ startup_attach(void)
 		/* We will be the tracer process. Remember our new pid: */
 		strace_tracer_pid = getpid();
 
-		switch (daemonized_tracer) {
+		switch (daemonized_tracer)
+		{
 		case DAEMONIZE_NEW_PGROUP:
 			/*
 			 * If -D is passed twice, create a new process group,
@@ -1310,7 +1384,7 @@ startup_attach(void)
 			 */
 			if (setpgid(0, 0) < 0)
 				perror_msg_and_die("Cannot create a new"
-						   " process group");
+								   " process group");
 			break;
 		case DAEMONIZE_NEW_SESSION:
 			/*
@@ -1319,12 +1393,13 @@ startup_attach(void)
 			 */
 			if (setsid() < 0)
 				perror_msg_and_die("Cannot create a new"
-						   " session");
+								   " session");
 			break;
 		}
 	}
 
-	for (tcbi = 0; tcbi < tcbtabsize; tcbi++) {
+	for (tcbi = 0; tcbi < tcbtabsize; tcbi++)
+	{
 		tcp = tcbtab[tcbi];
 
 		if (!tcp->pid)
@@ -1334,7 +1409,8 @@ startup_attach(void)
 		if (tcp->flags & TCB_ATTACHED)
 			continue; /* no, we already attached it */
 
-		if (tcp->pid == parent_pid || tcp->pid == strace_tracer_pid) {
+		if (tcp->pid == parent_pid || tcp->pid == strace_tracer_pid)
+		{
 			errno = EPERM;
 			perror_msg("attach: pid %d", tcp->pid);
 			droptcb(tcp);
@@ -1347,7 +1423,8 @@ startup_attach(void)
 			return;
 	} /* for each tcbtab[] */
 
-	if (daemonized_tracer) {
+	if (daemonized_tracer)
+	{
 		/*
 		 * Make parent go away.
 		 * Also makes grandparent's wait() unblock.
@@ -1360,7 +1437,8 @@ startup_attach(void)
 /* Stack-o-phobic exec helper, in the hope to work around
  * NOMMU + "daemonized tracer" difficulty.
  */
-struct exec_params {
+struct exec_params
+{
 	int fd_to_close;
 	uid_t run_euid;
 	gid_t run_egid;
@@ -1378,32 +1456,41 @@ exec_or_die(void)
 
 	if (params->fd_to_close >= 0)
 		close(params->fd_to_close);
-	if (!daemonized_tracer && !use_seize) {
-		if (ptrace(PTRACE_TRACEME, 0L, 0L, 0L) < 0) {
+	if (!daemonized_tracer && !use_seize)
+	{
+		if (ptrace(PTRACE_TRACEME, 0L, 0L, 0L) < 0)
+		{
 			perror_msg_and_die("ptrace(PTRACE_TRACEME, ...)");
 		}
 	}
 
-	if (username != NULL) {
+	if (username != NULL)
+	{
 		/*
 		 * It is important to set groups before we
 		 * lose privileges on setuid.
 		 */
-		if (initgroups(username, run_gid) < 0) {
+		if (initgroups(username, run_gid) < 0)
+		{
 			perror_msg_and_die("initgroups");
 		}
-		if (setregid(run_gid, params->run_egid) < 0) {
+		if (setregid(run_gid, params->run_egid) < 0)
+		{
 			perror_msg_and_die("setregid");
 		}
-		if (setreuid(run_uid, params->run_euid) < 0) {
+		if (setreuid(run_uid, params->run_euid) < 0)
+		{
 			perror_msg_and_die("setreuid");
 		}
-	} else if (geteuid() != 0)
-		if (setreuid(run_uid, run_uid) < 0) {
+	}
+	else if (geteuid() != 0)
+		if (setreuid(run_uid, run_uid) < 0)
+		{
 			perror_msg_and_die("setreuid");
 		}
 
-	if (!daemonized_tracer) {
+	if (!daemonized_tracer)
+	{
 		/*
 		 * Induce a ptrace stop. Tracer (our parent)
 		 * will resume us with PTRACE_SYSCALL and display
@@ -1413,7 +1500,9 @@ exec_or_die(void)
 		 */
 		if (!NOMMU_SYSTEM)
 			kill(getpid(), SIGSTOP);
-	} else {
+	}
+	else
+	{
 		alarm(3);
 		/* we depend on SIGCHLD set to SIG_DFL by init code */
 		/* if it happens to be SIG_IGN'ed, wait won't block */
@@ -1425,7 +1514,7 @@ exec_or_die(void)
 		sigaction(SIGCHLD, &params_for_tracee.child_sa, NULL);
 
 	debug_msg("seccomp filter %s",
-		  seccomp_filtering ? "enabled" : "disabled");
+			  seccomp_filtering ? "enabled" : "disabled");
 	if (seccomp_filtering)
 		init_seccomp_filter();
 	execve(params->pathname, params->argv, params->env);
@@ -1465,7 +1554,8 @@ ensure_standard_fds_opened(void)
 {
 	int fd;
 
-	while ((fd = open_dummy_desc()) <= 2) {
+	while ((fd = open_dummy_desc()) <= 2)
+	{
 		if (fd == 2)
 			break;
 		fd_is_placeholder[fd] = true;
@@ -1488,8 +1578,10 @@ redirect_standard_fds(void)
 	 * It might be a good idea to redirect stderr as well,
 	 * but we sometimes need to print error messages.
 	 */
-	for (i = 0; i <= 1; ++i) {
-		if (!fd_is_placeholder[i]) {
+	for (i = 0; i <= 1; ++i)
+	{
+		if (!fd_is_placeholder[i])
+		{
 			close(i);
 			open_dummy_desc();
 		}
@@ -1509,11 +1601,13 @@ startup_child(char **argv, char **env)
 	filename = argv[0];
 	filename_len = strlen(filename);
 
-	if (filename_len > sizeof(pathname) - 1) {
+	if (filename_len > sizeof(pathname) - 1)
+	{
 		errno = ENAMETOOLONG;
 		perror_msg_and_die("exec");
 	}
-	if (strchr(filename, '/')) {
+	if (strchr(filename, '/'))
+	{
 		strcpy(pathname, filename);
 	}
 #ifdef USE_DEBUGGING_EXEC
@@ -1525,24 +1619,31 @@ startup_child(char **argv, char **env)
 	else if (stat_file(filename, &statbuf) == 0)
 		strcpy(pathname, filename);
 #endif /* USE_DEBUGGING_EXEC */
-	else {
+	else
+	{
 		const char *path;
 		size_t m, n, len;
 
-		for (path = getenv("PATH"); path && *path; path += m) {
+		for (path = getenv("PATH"); path && *path; path += m)
+		{
 			const char *colon = strchr(path, ':');
-			if (colon) {
+			if (colon)
+			{
 				n = colon - path;
 				m = n + 1;
-			} else
+			}
+			else
 				m = n = strlen(path);
-			if (n == 0) {
+			if (n == 0)
+			{
 				if (!getcwd(pathname, PATH_MAX))
 					continue;
 				len = strlen(pathname);
-			} else if (n > sizeof(pathname) - 1)
+			}
+			else if (n > sizeof(pathname) - 1)
 				continue;
-			else {
+			else
+			{
 				strncpy(pathname, path, n);
 				len = n;
 			}
@@ -1552,17 +1653,18 @@ startup_child(char **argv, char **env)
 				continue;
 			strcpy(pathname + len, filename);
 			if (stat_file(pathname, &statbuf) == 0 &&
-			    /* Accept only regular files
+				/* Accept only regular files
 			       with some execute bits set.
 			       XXX not perfect, might still fail */
-			    S_ISREG(statbuf.st_mode) &&
-			    (statbuf.st_mode & 0111))
+				S_ISREG(statbuf.st_mode) &&
+				(statbuf.st_mode & 0111))
 				break;
 		}
 		if (!path || !*path)
 			pathname[0] = '\0';
 	}
-	if (stat_file(pathname, &statbuf) < 0) {
+	if (stat_file(pathname, &statbuf) < 0)
+	{
 		perror_msg_and_die("Can't stat '%s'", filename);
 	}
 
@@ -1584,9 +1686,8 @@ startup_child(char **argv, char **env)
 	if (pid < 0)
 		perror_func_msg_and_die("fork");
 
-	if ((pid != 0 && daemonized_tracer)
-	 || (pid == 0 && !daemonized_tracer)
-	) {
+	if ((pid != 0 && daemonized_tracer) || (pid == 0 && !daemonized_tracer))
+	{
 		/* We are to become the tracee. Two cases:
 		 * -D: we are parent
 		 * not -D: we are child
@@ -1596,23 +1697,30 @@ startup_child(char **argv, char **env)
 
 	/* We are the tracer */
 
-	if (!daemonized_tracer) {
+	if (!daemonized_tracer)
+	{
 		strace_child = pid;
-		if (!use_seize) {
+		if (!use_seize)
+		{
 			/* child did PTRACE_TRACEME, nothing to do in parent */
-		} else {
-			if (!NOMMU_SYSTEM) {
+		}
+		else
+		{
+			if (!NOMMU_SYSTEM)
+			{
 				/* Wait until child stopped itself */
 				int status;
-				while (waitpid(pid, &status, WSTOPPED) < 0) {
+				while (waitpid(pid, &status, WSTOPPED) < 0)
+				{
 					if (errno == EINTR)
 						continue;
 					perror_msg_and_die("waitpid");
 				}
-				if (!WIFSTOPPED(status) || WSTOPSIG(status) != SIGSTOP) {
+				if (!WIFSTOPPED(status) || WSTOPSIG(status) != SIGSTOP)
+				{
 					kill_save_errno(pid, SIGKILL);
 					perror_msg_and_die("Unexpected wait status %#x",
-							   status);
+									   status);
 				}
 			}
 			/* Else: NOMMU case, we have no way to sync.
@@ -1620,20 +1728,21 @@ startup_child(char **argv, char **env)
 			 * This means that we may miss a few first syscalls...
 			 */
 
-			if (ptrace_attach_or_seize(pid)) {
+			if (ptrace_attach_or_seize(pid))
+			{
 				kill_save_errno(pid, SIGKILL);
 				perror_msg_and_die("attach: ptrace(%s, %d)",
-						   ptrace_attach_cmd, pid);
+								   ptrace_attach_cmd, pid);
 			}
 			if (!NOMMU_SYSTEM)
 				kill(pid, SIGCONT);
 		}
 		tcp = alloctcb(pid);
-		after_successful_attach(tcp, TCB_SKIP_DETACH_ON_FIRST_EXEC
-					     | (NOMMU_SYSTEM ? 0
-						: (TCB_HIDE_LOG
-						   | post_attach_sigstop)));
-	} else {
+		after_successful_attach(tcp, TCB_SKIP_DETACH_ON_FIRST_EXEC | (NOMMU_SYSTEM ? 0
+																				   : (TCB_HIDE_LOG | post_attach_sigstop)));
+	}
+	else
+	{
 		/* With -D, we are *child* here, the tracee is our parent. */
 		strace_child = strace_tracer_pid;
 		strace_tracer_pid = getpid();
@@ -1689,7 +1798,8 @@ test_ptrace_seize(void)
 	int pid;
 
 	/* Need fork for test. NOMMU has no forks */
-	if (NOMMU_SYSTEM) {
+	if (NOMMU_SYSTEM)
+	{
 		post_attach_sigstop = 0; /* this sets use_seize to 1 */
 		return;
 	}
@@ -1698,7 +1808,8 @@ test_ptrace_seize(void)
 	if (pid < 0)
 		perror_func_msg_and_die("fork");
 
-	if (pid == 0) {
+	if (pid == 0)
+	{
 		pause();
 		_exit(0);
 	}
@@ -1707,24 +1818,29 @@ test_ptrace_seize(void)
 	 * attaching tracee continues to run unless a trap condition occurs.
 	 * PTRACE_SEIZE doesn't affect signal or group stop state.
 	 */
-	if (ptrace(PTRACE_SEIZE, pid, 0, 0) == 0) {
+	if (ptrace(PTRACE_SEIZE, pid, 0, 0) == 0)
+	{
 		post_attach_sigstop = 0; /* this sets use_seize to 1 */
-	} else {
+	}
+	else
+	{
 		debug_msg("PTRACE_SEIZE doesn't work");
 	}
 
 	kill(pid, SIGKILL);
 
-	while (1) {
+	while (1)
+	{
 		int status, tracee_pid;
 
 		errno = 0;
 		tracee_pid = waitpid(pid, &status, 0);
-		if (tracee_pid <= 0) {
+		if (tracee_pid <= 0)
+		{
 			if (errno == EINTR)
 				continue;
 			perror_func_msg_and_die("unexpected wait result %d",
-						tracee_pid);
+									tracee_pid);
 		}
 		if (WIFSIGNALED(status))
 			return;
@@ -1746,9 +1862,11 @@ get_os_release(void)
 	 */
 	const char *p = u.release;
 	unsigned int rel = 0;
-	for (unsigned int parts = 0; parts < 3; ++parts) {
+	for (unsigned int parts = 0; parts < 3; ++parts)
+	{
 		unsigned int n = 0;
-		for (; (*p >= '0') && (*p <= '9'); ++p) {
+		for (; (*p >= '0') && (*p <= '9'); ++p)
+		{
 			n *= 10;
 			n += *p - '0';
 		}
@@ -1763,7 +1881,7 @@ get_os_release(void)
 static void
 set_sighandler(int signo, void (*sighandler)(int), struct sigaction *oldact)
 {
-	const struct sigaction sa = { .sa_handler = sighandler };
+	const struct sigaction sa = {.sa_handler = sighandler};
 	sigaction(signo, &sa, oldact);
 }
 
@@ -1771,17 +1889,17 @@ static int
 parse_interruptible_arg(const char *arg)
 {
 	static const struct xlat_data intr_str[] = {
-		{ INTR_ANYWHERE,	"anywhere" },
-		{ INTR_ANYWHERE,	"always" },
-		{ INTR_WHILE_WAIT,	"waiting" },
-		{ INTR_NEVER,		"never" },
-		{ INTR_BLOCK_TSTP_TOO,	"never_tstp" },
+		{INTR_ANYWHERE, "anywhere"},
+		{INTR_ANYWHERE, "always"},
+		{INTR_WHILE_WAIT, "waiting"},
+		{INTR_NEVER, "never"},
+		{INTR_BLOCK_TSTP_TOO, "never_tstp"},
 	};
 
 	const struct xlat_data *intr_arg = find_xlat_val(intr_str, arg);
 
-	return intr_arg ? (int) intr_arg->val
-			: (int) string_to_uint_upto(arg, NUM_INTR_OPTS - 1);
+	return intr_arg ? (int)intr_arg->val
+					: (int)string_to_uint_upto(arg, NUM_INTR_OPTS - 1);
 }
 
 static int
@@ -1790,11 +1908,13 @@ parse_ts_arg(const char *in_arg)
 	static const char format_pfx[] = "format:";
 	static const char scale_pfx[] = "precision:";
 
-	enum {
+	enum
+	{
 		TOKEN_FORMAT = 1 << 0,
-		TOKEN_SCALE  = 1 << 1,
+		TOKEN_SCALE = 1 << 1,
 	} token_type;
-	enum {
+	enum
+	{
 		FK_UNSET,
 		FK_NONE,
 		FK_TIME,
@@ -1806,33 +1926,43 @@ parse_ts_arg(const char *in_arg)
 	char *saveptr = NULL;
 
 	for (const char *token = strtok_r(arg, ",", &saveptr);
-	     token; token = strtok_r(NULL, ",", &saveptr)) {
+		 token; token = strtok_r(NULL, ",", &saveptr))
+	{
 		token_type = TOKEN_FORMAT | TOKEN_SCALE;
 
-		if (!strncasecmp(token, format_pfx, sizeof(format_pfx) - 1)) {
+		if (!strncasecmp(token, format_pfx, sizeof(format_pfx) - 1))
+		{
 			token += sizeof(format_pfx) - 1;
 			token_type = TOKEN_FORMAT;
-		} else if (!strncasecmp(token, scale_pfx,
-					sizeof(scale_pfx) - 1)) {
+		}
+		else if (!strncasecmp(token, scale_pfx,
+							  sizeof(scale_pfx) - 1))
+		{
 			token += sizeof(scale_pfx) - 1;
 			token_type = TOKEN_SCALE;
-
 		}
 
-		if (token_type & TOKEN_FORMAT) {
-			if (!strcasecmp(token, "none")) {
+		if (token_type & TOKEN_FORMAT)
+		{
+			if (!strcasecmp(token, "none"))
+			{
 				format_kind = FK_NONE;
 				continue;
-			} else if (!strcasecmp(token, "time")) {
+			}
+			else if (!strcasecmp(token, "time"))
+			{
 				format_kind = FK_TIME;
 				continue;
-			} else if (!strcasecmp(token, "unix")) {
+			}
+			else if (!strcasecmp(token, "unix"))
+			{
 				format_kind = FK_UNIX;
 				continue;
 			}
 		}
 
-		if (token_type & TOKEN_SCALE) {
+		if (token_type & TOKEN_SCALE)
+		{
 			precision_scale =
 				str2timescale_optarg(token, &precision_width);
 
@@ -1844,7 +1974,8 @@ parse_ts_arg(const char *in_arg)
 		return -1;
 	}
 
-	switch (format_kind) {
+	switch (format_kind)
+	{
 	case FK_UNSET:
 		if (!tflag_format)
 			tflag_format = "%T";
@@ -1860,7 +1991,8 @@ parse_ts_arg(const char *in_arg)
 		break;
 	}
 
-	if (precision_scale > 0) {
+	if (precision_scale > 0)
+	{
 		tflag_scale = precision_scale;
 		tflag_width = precision_width;
 	}
@@ -1876,25 +2008,29 @@ remove_from_env(char **env, size_t *env_count, const char *var)
 	size_t w = 0;
 
 	debug_func_msg("Removing variable \"%s\" from the command environment",
-		       var);
+				   var);
 
-	for (size_t r = 0; r < *env_count; ++r) {
+	for (size_t r = 0; r < *env_count; ++r)
+	{
 		if (!strncmp(env[r], var, len) &&
-		    (env[r][len] == '=' || env[r][len] == '\0')) {
+			(env[r][len] == '=' || env[r][len] == '\0'))
+		{
 			debug_func_msg("Skipping entry %zu (\"%s\")",
-				       r, env[r]);
+						   r, env[r]);
 			continue;
 		}
-		if (w < r) {
+		if (w < r)
+		{
 			debug_func_msg("Copying entry %zu to %zu", r, w);
 			env[w] = env[r];
 		}
 		++w;
 	}
 
-	if (w < *env_count) {
+	if (w < *env_count)
+	{
 		debug_func_msg("Decreasing env count from %zu to %zu",
-			       *env_count, w);
+					   *env_count, w);
 		*env_count = w;
 	}
 }
@@ -1904,20 +2040,24 @@ add_to_env(char **env, size_t *env_count, char *var, const size_t len)
 {
 	size_t r;
 
-	for (r = 0; r < *env_count; ++r) {
+	for (r = 0; r < *env_count; ++r)
+	{
 		if (!strncmp(env[r], var, len) &&
-		    (env[r][len] == '=' || env[r][len] == '\0'))
+			(env[r][len] == '=' || env[r][len] == '\0'))
 			break;
 	}
 
-	if (r < *env_count) {
+	if (r < *env_count)
+	{
 		debug_func_msg("Replacing entry %zu (\"%s\")"
-			       ", key=\"%.*s\", var=\"%s\"",
-			       r, env[r], (int) len, var, var);
-	} else {
+					   ", key=\"%.*s\", var=\"%s\"",
+					   r, env[r], (int)len, var, var);
+	}
+	else
+	{
 		debug_func_msg("Adding entry %zu"
-			       ", key=\"%.*s\", var=\"%s\"",
-			       r, (int) len, var, var);
+					   ", key=\"%.*s\", var=\"%s\"",
+					   r, (int)len, var, var);
 		*env_count += 1;
 	}
 
@@ -1946,18 +2086,19 @@ make_env(char **orig_env, char *const *env_changes, size_t env_change_count)
 	size_t new_env_size;
 
 	/* Determining the environment variable count.  */
-	if (orig_env) {
+	if (orig_env)
+	{
 		for (; orig_env[new_env_count]; ++new_env_count)
 			;
 	}
 	new_env_size = new_env_count + env_change_count;
 
 	if (new_env_size < new_env_count || new_env_size < env_change_count ||
-	    new_env_size + 1 < new_env_size)
+		new_env_size + 1 < new_env_size)
 		error_msg_and_die("Cannot construct new environment: the sum "
-				  "of old environment variable count (%zu) and "
-				  "environment changes count (%zu) is too big",
-				  new_env_count, env_change_count);
+						  "of old environment variable count (%zu) and "
+						  "environment changes count (%zu) is too big",
+						  new_env_count, env_change_count);
 
 	new_env_size++;
 	new_env = xallocarray(new_env_size, sizeof(*new_env));
@@ -2029,7 +2170,8 @@ init(int argc, char *argv[])
 	size_t env_change_size = 0;
 	size_t env_change_count = 0;
 
-	if (!program_invocation_name || !*program_invocation_name) {
+	if (!program_invocation_name || !*program_invocation_name)
+	{
 		static char name[] = "strace";
 		program_invocation_name =
 			(argc > 0 && argv[0] && *argv[0]) ? argv[0] : name;
@@ -2048,7 +2190,7 @@ init(int argc, char *argv[])
 	qualify_abbrev("all");
 	qualify_verbose("all");
 #if DEFAULT_QUAL_FLAGS != (QUAL_TRACE | QUAL_ABBREV | QUAL_VERBOSE)
-# error Bug in DEFAULT_QUAL_FLAGS
+#error Bug in DEFAULT_QUAL_FLAGS
 #endif
 	qualify_status("all");
 	qualify_quiet("none");
@@ -2058,7 +2200,8 @@ init(int argc, char *argv[])
 	static const char optstring[] =
 		"+a:Ab:cCdDe:E:fFhiI:kno:O:p:P:qrs:S:tTu:U:vVwxX:yzZ";
 
-	enum {
+	enum
+	{
 		GETOPT_SECCOMP = 0x100,
 		GETOPT_DAEMONIZE,
 		GETOPT_HEX_STR,
@@ -2085,77 +2228,78 @@ init(int argc, char *argv[])
 		GETOPT_QUAL_DECODE_FD,
 	};
 	static const struct option longopts[] = {
-		{ "columns",		required_argument, 0, 'a' },
-		{ "output-append-mode",	no_argument,	   0, 'A' },
-		{ "detach-on",		required_argument, 0, 'b' },
-		{ "summary-only",	no_argument,	   0, 'c' },
-		{ "summary",		no_argument,	   0, 'C' },
-		{ "debug",		no_argument,	   0, 'd' },
-		{ "daemonize",		optional_argument, 0, GETOPT_DAEMONIZE },
-		{ "daemonised",		optional_argument, 0, GETOPT_DAEMONIZE },
-		{ "daemonized",		optional_argument, 0, GETOPT_DAEMONIZE },
-		{ "env",		required_argument, 0, 'E' },
-		{ "follow-forks",	no_argument,	   0, GETOPT_FOLLOWFORKS },
-		{ "output-separately",	no_argument,	   0,
-			GETOPT_OUTPUT_SEPARATELY },
-		{ "help",		no_argument,	   0, 'h' },
-		{ "instruction-pointer", no_argument,      0, 'i' },
-		{ "interruptible",	required_argument, 0, 'I' },
-		{ "stack-traces",	no_argument,	   0, 'k' },
-		{ "syscall-number",	no_argument,	   0, 'n' },
-		{ "output",		required_argument, 0, 'o' },
-		{ "summary-syscall-overhead", required_argument, 0, 'O' },
-		{ "attach",		required_argument, 0, 'p' },
-		{ "trace-path",		required_argument, 0, 'P' },
-		{ "relative-timestamps", optional_argument, 0, 'r' },
-		{ "string-limit",	required_argument, 0, 's' },
-		{ "summary-sort-by",	required_argument, 0, 'S' },
-		{ "absolute-timestamps", optional_argument, 0, GETOPT_TS },
-		{ "timestamps",		optional_argument, 0, GETOPT_TS },
-		{ "syscall-times",	optional_argument, 0, 'T' },
-		{ "user",		required_argument, 0, 'u' },
-		{ "summary-columns",	required_argument, 0, 'U' },
-		{ "no-abbrev",		no_argument,	   0, 'v' },
-		{ "version",		no_argument,	   0, 'V' },
-		{ "summary-wall-clock", no_argument,	   0, 'w' },
-		{ "strings-in-hex",	optional_argument, 0, GETOPT_HEX_STR },
-		{ "const-print-style",	required_argument, 0, 'X' },
-		{ "pidns-translation",	no_argument      , 0, GETOPT_PIDNS_TRANSLATION },
-		{ "successful-only",	no_argument,	   0, 'z' },
-		{ "failed-only",	no_argument,	   0, 'Z' },
-		{ "failing-only",	no_argument,	   0, 'Z' },
-		{ "seccomp-bpf",	no_argument,	   0, GETOPT_SECCOMP },
+		{"columns", required_argument, 0, 'a'},
+		{"output-append-mode", no_argument, 0, 'A'},
+		{"detach-on", required_argument, 0, 'b'},
+		{"summary-only", no_argument, 0, 'c'},
+		{"summary", no_argument, 0, 'C'},
+		{"debug", no_argument, 0, 'd'},
+		{"daemonize", optional_argument, 0, GETOPT_DAEMONIZE},
+		{"daemonised", optional_argument, 0, GETOPT_DAEMONIZE},
+		{"daemonized", optional_argument, 0, GETOPT_DAEMONIZE},
+		{"env", required_argument, 0, 'E'},
+		{"follow-forks", no_argument, 0, GETOPT_FOLLOWFORKS},
+		{"output-separately", no_argument, 0,
+		 GETOPT_OUTPUT_SEPARATELY},
+		{"help", no_argument, 0, 'h'},
+		{"instruction-pointer", no_argument, 0, 'i'},
+		{"interruptible", required_argument, 0, 'I'},
+		{"stack-traces", no_argument, 0, 'k'},
+		{"syscall-number", no_argument, 0, 'n'},
+		{"output", required_argument, 0, 'o'},
+		{"summary-syscall-overhead", required_argument, 0, 'O'},
+		{"attach", required_argument, 0, 'p'},
+		{"trace-path", required_argument, 0, 'P'},
+		{"relative-timestamps", optional_argument, 0, 'r'},
+		{"string-limit", required_argument, 0, 's'},
+		{"summary-sort-by", required_argument, 0, 'S'},
+		{"absolute-timestamps", optional_argument, 0, GETOPT_TS},
+		{"timestamps", optional_argument, 0, GETOPT_TS},
+		{"syscall-times", optional_argument, 0, 'T'},
+		{"user", required_argument, 0, 'u'},
+		{"summary-columns", required_argument, 0, 'U'},
+		{"no-abbrev", no_argument, 0, 'v'},
+		{"version", no_argument, 0, 'V'},
+		{"summary-wall-clock", no_argument, 0, 'w'},
+		{"strings-in-hex", optional_argument, 0, GETOPT_HEX_STR},
+		{"const-print-style", required_argument, 0, 'X'},
+		{"pidns-translation", no_argument, 0, GETOPT_PIDNS_TRANSLATION},
+		{"successful-only", no_argument, 0, 'z'},
+		{"failed-only", no_argument, 0, 'Z'},
+		{"failing-only", no_argument, 0, 'Z'},
+		{"seccomp-bpf", no_argument, 0, GETOPT_SECCOMP},
 #ifdef ENABLE_SECONTEXT
-		{ "secontext",		optional_argument, 0, GETOPT_SECONTEXT },
+		{"secontext", optional_argument, 0, GETOPT_SECONTEXT},
 #endif
 
-		{ "trace",	required_argument, 0, GETOPT_QUAL_TRACE },
-		{ "abbrev",	required_argument, 0, GETOPT_QUAL_ABBREV },
-		{ "verbose",	required_argument, 0, GETOPT_QUAL_VERBOSE },
-		{ "raw",	required_argument, 0, GETOPT_QUAL_RAW },
-		{ "signals",	required_argument, 0, GETOPT_QUAL_SIGNAL },
-		{ "status",	required_argument, 0, GETOPT_QUAL_STATUS },
-		{ "read",	required_argument, 0, GETOPT_QUAL_READ },
-		{ "write",	required_argument, 0, GETOPT_QUAL_WRITE },
-		{ "fault",	required_argument, 0, GETOPT_QUAL_FAULT },
-		{ "inject",	required_argument, 0, GETOPT_QUAL_INJECT },
-		{ "kvm",	required_argument, 0, GETOPT_QUAL_KVM },
-		{ "quiet",	optional_argument, 0, GETOPT_QUAL_QUIET },
-		{ "silent",	optional_argument, 0, GETOPT_QUAL_QUIET },
-		{ "silence",	optional_argument, 0, GETOPT_QUAL_QUIET },
-		{ "decode-fds",	optional_argument, 0, GETOPT_QUAL_DECODE_FD },
+		{"trace", required_argument, 0, GETOPT_QUAL_TRACE},
+		{"abbrev", required_argument, 0, GETOPT_QUAL_ABBREV},
+		{"verbose", required_argument, 0, GETOPT_QUAL_VERBOSE},
+		{"raw", required_argument, 0, GETOPT_QUAL_RAW},
+		{"signals", required_argument, 0, GETOPT_QUAL_SIGNAL},
+		{"status", required_argument, 0, GETOPT_QUAL_STATUS},
+		{"read", required_argument, 0, GETOPT_QUAL_READ},
+		{"write", required_argument, 0, GETOPT_QUAL_WRITE},
+		{"fault", required_argument, 0, GETOPT_QUAL_FAULT},
+		{"inject", required_argument, 0, GETOPT_QUAL_INJECT},
+		{"kvm", required_argument, 0, GETOPT_QUAL_KVM},
+		{"quiet", optional_argument, 0, GETOPT_QUAL_QUIET},
+		{"silent", optional_argument, 0, GETOPT_QUAL_QUIET},
+		{"silence", optional_argument, 0, GETOPT_QUAL_QUIET},
+		{"decode-fds", optional_argument, 0, GETOPT_QUAL_DECODE_FD},
 
-		{ 0, 0, 0, 0 }
-	};
+		{0, 0, 0, 0}};
 
 	lopt_idx = -1;
-	while ((c = getopt_long(argc, argv, optstring, longopts, &lopt_idx)) != EOF) {
-		const struct option *lopt = lopt_idx >= 0
-			&& (unsigned) lopt_idx < ARRAY_SIZE(longopts)
-			? longopts + lopt_idx : NULL;
+	while ((c = getopt_long(argc, argv, optstring, longopts, &lopt_idx)) != EOF)
+	{
+		const struct option *lopt = lopt_idx >= 0 && (unsigned)lopt_idx < ARRAY_SIZE(longopts)
+										? longopts + lopt_idx
+										: NULL;
 		lopt_idx = -1;
 
-		switch (c) {
+		switch (c)
+		{
 		case 'a':
 			acolumn = string_to_uint(optarg);
 			if (acolumn < 0)
@@ -2167,22 +2311,24 @@ init(int argc, char *argv[])
 		case 'b':
 			if (strcmp(optarg, "execve") != 0)
 				error_msg_and_die("Syscall '%s' for -b isn't supported",
-					optarg);
+								  optarg);
 			detach_on_execve = 1;
 			break;
 		case 'c':
-			if (cflag == CFLAG_BOTH) {
+			if (cflag == CFLAG_BOTH)
+			{
 				error_msg_and_help("-c/--summary-only and "
-						   "-C/--summary are mutually "
-						   "exclusive");
+								   "-C/--summary are mutually "
+								   "exclusive");
 			}
 			cflag = CFLAG_ONLY_STATS;
 			break;
 		case 'C':
-			if (cflag == CFLAG_ONLY_STATS) {
+			if (cflag == CFLAG_ONLY_STATS)
+			{
 				error_msg_and_help("-c/--summary-only and "
-						   "-C/--summary are mutually "
-						   "exclusive");
+								   "-C/--summary are mutually "
+								   "exclusive");
 			}
 			cflag = CFLAG_BOTH;
 			break;
@@ -2195,8 +2341,8 @@ init(int argc, char *argv[])
 		case GETOPT_DAEMONIZE:
 			daemonized_tracer_long =
 				find_arg_val(optarg, daemonize_str,
-					     DAEMONIZE_GRANDCHILD,
-					     DAEMONIZE_NONE);
+							 DAEMONIZE_GRANDCHILD,
+							 DAEMONIZE_NONE);
 			if (daemonized_tracer_long <= DAEMONIZE_NONE)
 				error_opt_arg(c, lopt, optarg);
 			break;
@@ -2206,8 +2352,8 @@ init(int argc, char *argv[])
 		case 'E':
 			if (env_change_count >= env_change_size)
 				env_changes = xgrowarray(env_changes,
-							 &env_change_size,
-							 sizeof(*env_changes));
+										 &env_change_size,
+										 sizeof(*env_changes));
 
 			env_changes[env_change_count++] = optarg;
 			break;
@@ -2239,8 +2385,8 @@ init(int argc, char *argv[])
 			stack_trace_enabled = true;
 #else
 			error_msg_and_die("Stack traces (-k/--stack-traces "
-					  "option) are not supported by this "
-					  "build of strace");
+							  "option) are not supported by this "
+							  "build of strace");
 #endif
 			break;
 		case 'n':
@@ -2259,8 +2405,8 @@ init(int argc, char *argv[])
 		case 'P':
 			if (pathtrace_count >= pathtrace_size)
 				pathtrace_paths = xgrowarray(pathtrace_paths,
-					&pathtrace_size,
-					sizeof(pathtrace_paths[0]));
+											 &pathtrace_size,
+											 sizeof(pathtrace_paths[0]));
 
 			pathtrace_paths[pathtrace_count++] = optarg;
 			break;
@@ -2271,13 +2417,13 @@ init(int argc, char *argv[])
 			rflag = 1;
 			rflag_width = 6;
 			rflag_scale = str2timescale_optarg(optarg,
-							   &rflag_width);
+											   &rflag_width);
 			if (rflag_scale < 0)
 				error_opt_arg(c, lopt, optarg);
 			break;
 		case 's':
 			i = string_to_uint(optarg);
-			if (i < 0 || (unsigned int) i > -1U / 4)
+			if (i < 0 || (unsigned int)i > -1U / 4)
 				error_opt_arg(c, lopt, optarg);
 			max_strlen = i;
 			break;
@@ -2297,7 +2443,7 @@ init(int argc, char *argv[])
 			Tflag = 1;
 			Tflag_width = 6;
 			Tflag_scale = str2timescale_optarg(optarg,
-							   &Tflag_width);
+											   &Tflag_width);
 			if (Tflag_scale < 0)
 				error_opt_arg(c, lopt, optarg);
 			break;
@@ -2323,7 +2469,7 @@ init(int argc, char *argv[])
 			break;
 		case GETOPT_HEX_STR:
 			xflag_long = find_arg_val(optarg, xflag_str,
-						  HEXSTR_ALL, HEXSTR_NONE);
+									  HEXSTR_ALL, HEXSTR_NONE);
 			if (xflag_long <= HEXSTR_NONE)
 				error_opt_arg(c, lopt, optarg);
 			break;
@@ -2359,7 +2505,8 @@ init(int argc, char *argv[])
 #ifdef ENABLE_SECONTEXT
 		case GETOPT_SECONTEXT:
 			selinux_context = true;
-			if (optarg) {
+			if (optarg)
+			{
 				if (!strcmp(optarg, "full"))
 					selinux_context_full = true;
 				else
@@ -2415,154 +2562,187 @@ init(int argc, char *argv[])
 	argv += optind;
 	argc -= optind;
 
-	if (argc < 0 || (!nprocs && !argc)) {
+	if (argc < 0 || (!nprocs && !argc))
+	{
 		error_msg_and_help("must have PROG [ARGS] or -p PID");
 	}
 
-	if (daemonized_tracer_long) {
-		if (daemonized_tracer) {
+	if (daemonized_tracer_long)
+	{
+		if (daemonized_tracer)
+		{
 			error_msg_and_die("-D and --daemonize cannot"
-					  " be provided simultaneously");
-		} else {
+							  " be provided simultaneously");
+		}
+		else
+		{
 			daemonized_tracer = daemonized_tracer_long;
 		}
 	}
 
-	if (!argc && daemonized_tracer) {
+	if (!argc && daemonized_tracer)
+	{
 		error_msg_and_help("PROG [ARGS] must be specified with "
-				   "-D/--daemonize");
+						   "-D/--daemonize");
 	}
 
-	if (daemonized_tracer > (unsigned int) MAX_DAEMONIZE_OPTS)
+	if (daemonized_tracer > (unsigned int)MAX_DAEMONIZE_OPTS)
 		error_msg_and_help("Too many -D's (%u), maximum supported -D "
-				   "count is %d",
-				   daemonized_tracer, MAX_DAEMONIZE_OPTS);
+						   "count is %d",
+						   daemonized_tracer, MAX_DAEMONIZE_OPTS);
 
-	if (tflag_short) {
-		if (tflag_long_set) {
+	if (tflag_short)
+	{
+		if (tflag_long_set)
+		{
 			error_msg_and_die("-t and --absolute-timestamps cannot"
-					  " be provided simultaneously");
+							  " be provided simultaneously");
 		}
 
-		parse_ts_arg(tflag_short == 1 ? tflag_str :
-			     tflag_short == 2 ? ttflag_str : tttflag_str);
+		parse_ts_arg(tflag_short == 1 ? tflag_str : tflag_short == 2 ? ttflag_str
+																	 : tttflag_str);
 	}
 
-	if (xflag_long) {
-		if (xflag) {
+	if (xflag_long)
+	{
+		if (xflag)
+		{
 			error_msg_and_die("-x and --strings-in-hex cannot"
-					  " be provided simultaneously");
-		} else {
+							  " be provided simultaneously");
+		}
+		else
+		{
 			xflag = xflag_long;
 		}
 	}
 
-	if (yflag_short) {
-		if (decode_fd_set_updated) {
+	if (yflag_short)
+	{
+		if (decode_fd_set_updated)
+		{
 			error_msg_and_die("-y and --decode-fds cannot"
-					  " be provided simultaneously");
+							  " be provided simultaneously");
 		}
 
 		qualify_decode_fd(yflag_short == 1 ? yflag_qual : yyflag_qual);
 	}
 
-	if (seccomp_filtering && detach_on_execve) {
+	if (seccomp_filtering && detach_on_execve)
+	{
 		error_msg("--seccomp-bpf is not enabled because"
-			  " it is not compatible with -b");
+				  " it is not compatible with -b");
 		seccomp_filtering = false;
 	}
 
-	if (followfork_short) {
-		if (followfork) {
+	if (followfork_short)
+	{
+		if (followfork)
+		{
 			error_msg_and_die("-f and --follow-forks cannot"
-					  " be provided simultaneously");
-		} else if (followfork_short >= 2 && output_separately) {
+							  " be provided simultaneously");
+		}
+		else if (followfork_short >= 2 && output_separately)
+		{
 			error_msg_and_die("-ff and --output-separately cannot"
-					  " be provided simultaneously");
-		} else {
+							  " be provided simultaneously");
+		}
+		else
+		{
 			followfork = true;
 			output_separately = followfork_short >= 2;
 		}
 	}
 
-	if (seccomp_filtering) {
+	if (seccomp_filtering)
+	{
 		if (nprocs && (!argc || debug_flag))
 			error_msg("--seccomp-bpf is not enabled for processes"
-				  " attached with -p");
-		if (!followfork) {
+					  " attached with -p");
+		if (!followfork)
+		{
 			error_msg("--seccomp-bpf cannot be used without "
-				  "-f/--follow-forks, disabling");
+					  "-f/--follow-forks, disabling");
 			seccomp_filtering = false;
 		}
 	}
 
-	if (optF) {
-		if (followfork) {
+	if (optF)
+	{
+		if (followfork)
+		{
 			error_msg("deprecated option -F ignored");
-		} else {
+		}
+		else
+		{
 			error_msg("option -F is deprecated, "
-				  "please use -f/--follow-forks instead");
+					  "please use -f/--follow-forks instead");
 			followfork = true;
 		}
 	}
 
-	if (output_separately && cflag) {
+	if (output_separately && cflag)
+	{
 		error_msg_and_help("(-c/--summary-only or -C/--summary) and"
-				   " -ff/--output-separately"
-				   " are mutually exclusive");
+						   " -ff/--output-separately"
+						   " are mutually exclusive");
 	}
 
-	if (count_wallclock && !cflag) {
+	if (count_wallclock && !cflag)
+	{
 		error_msg_and_help("-w/--summary-wall-clock must be given with"
-				   " (-c/--summary-only or -C/--summary)");
+						   " (-c/--summary-only or -C/--summary)");
 	}
 
-	if (columns_set && !cflag) {
+	if (columns_set && !cflag)
+	{
 		error_msg_and_help("-U/--summary-columns must be given with"
-				   " (-c/--summary-only or -C/--summary)");
+						   " (-c/--summary-only or -C/--summary)");
 	}
 
-	if (sortby_set && !cflag) {
+	if (sortby_set && !cflag)
+	{
 		error_msg("-S/--summary-sort-by has no effect without"
-			  " (-c/--summary-only or -C/--summary)");
+				  " (-c/--summary-only or -C/--summary)");
 	}
 
-	if (cflag == CFLAG_ONLY_STATS) {
+	if (cflag == CFLAG_ONLY_STATS)
+	{
 		if (iflag)
 			error_msg("-i/--instruction-pointer has no effect "
-				  "with -c/--summary-only");
+					  "with -c/--summary-only");
 		if (stack_trace_enabled)
 			error_msg("-k/--stack-traces has no effect "
-				  "with -c/--summary-only");
+					  "with -c/--summary-only");
 		if (nflag)
 			error_msg("-n/--syscall-number has no effect "
-				  "with -c/--summary-only");
+					  "with -c/--summary-only");
 		if (rflag)
 			error_msg("-r/--relative-timestamps has no effect "
-				  "with -c/--summary-only");
+					  "with -c/--summary-only");
 		if (tflag_format)
 			error_msg("-t/--absolute-timestamps has no effect "
-				  "with -c/--summary-only");
+					  "with -c/--summary-only");
 		if (Tflag)
 			error_msg("-T/--syscall-times has no effect "
-				  "with -c/--summary-only");
+					  "with -c/--summary-only");
 		if (!number_set_array_is_empty(decode_fd_set, 0))
 			error_msg("-y/--decode-fds has no effect "
-				  "with -c/--summary-only");
+					  "with -c/--summary-only");
 #ifdef ENABLE_SECONTEXT
 		if (selinux_context)
 			error_msg("--secontext has no effect with "
-				  "-c/--summary-only");
+					  "-c/--summary-only");
 #endif
 	}
 
-	if (!outfname) {
+	if (!outfname)
+	{
 		if (output_separately && !followfork)
 			error_msg("--output-separately has no effect "
-				  "without -o/--output");
+					  "without -o/--output");
 		if (open_append)
 			error_msg("-A/--output-append-mode has no effect "
-				  "without -o/--output");
+					  "without -o/--output");
 	}
 
 #ifndef HAVE_OPEN_MEMSTREAM
@@ -2572,9 +2752,9 @@ init(int argc, char *argv[])
 
 	if (zflags > 1)
 		error_msg("Only the last of "
-			  "-z/--successful-only/-Z/--failed-only options will "
-			  "take effect. "
-			  "See status qualifier for more complex filters.");
+				  "-z/--successful-only/-Z/--failed-only options will "
+				  "take effect. "
+				  "See status qualifier for more complex filters.");
 
 	for (size_t cnt = 0; cnt < pathtrace_count; ++cnt)
 		pathtrace_select(pathtrace_paths[cnt]);
@@ -2592,28 +2772,33 @@ init(int argc, char *argv[])
 #endif
 
 	/* See if they want to run as another user. */
-	if (username != NULL) {
+	if (username != NULL)
+	{
 		struct passwd *pent;
 
-		if (getuid() != 0 || geteuid() != 0) {
+		if (getuid() != 0 || geteuid() != 0)
+		{
 			error_msg_and_die("You must be root to use "
-					  "the -u/--username option");
+							  "the -u/--username option");
 		}
 		pent = getpwnam(username);
-		if (pent == NULL) {
+		if (pent == NULL)
+		{
 			error_msg_and_die("Cannot find user '%s'", username);
 		}
 		run_uid = pent->pw_uid;
 		run_gid = pent->pw_gid;
-	} else {
+	}
+	else
+	{
 		run_uid = getuid();
 		run_gid = getgid();
 	}
 
 	if (followfork)
 		ptrace_setoptions |= PTRACE_O_TRACECLONE |
-				     PTRACE_O_TRACEFORK |
-				     PTRACE_O_TRACEVFORK;
+							 PTRACE_O_TRACEFORK |
+							 PTRACE_O_TRACEVFORK;
 
 	if (seccomp_filtering)
 		check_seccomp_filter();
@@ -2638,30 +2823,39 @@ init(int argc, char *argv[])
 	ensure_standard_fds_opened();
 
 	/* Check if they want to redirect the output. */
-	if (outfname) {
+	if (outfname)
+	{
 		/* See if they want to pipe the output. */
-		if (outfname[0] == '|' || outfname[0] == '!') {
+		if (outfname[0] == '|' || outfname[0] == '!')
+		{
 			/*
 			 * We can't do the <outfname>.PID funny business
 			 * when using popen, so prohibit it.
 			 */
 			if (output_separately)
 				error_msg_and_help("piping the output and "
-						   "-ff/--output-separately "
-						   "are mutually exclusive");
+								   "-ff/--output-separately "
+								   "are mutually exclusive");
 			shared_log = strace_popen(outfname + 1);
-		} else if (!output_separately) {
+		}
+		else if (!output_separately)
+		{
 			shared_log = strace_fopen(outfname);
-		} else if (strlen(outfname) >= PATH_MAX - sizeof(int) * 3) {
+		}
+		else if (strlen(outfname) >= PATH_MAX - sizeof(int) * 3)
+		{
 			errno = ENAMETOOLONG;
 			perror_msg_and_die("%s", outfname);
 		}
-	} else {
+	}
+	else
+	{
 		/* -ff without -o FILE is the same as single -f */
 		output_separately = false;
 	}
 
-	if (!outfname || outfname[0] == '|' || outfname[0] == '!') {
+	if (!outfname || outfname[0] == '|' || outfname[0] == '!')
+	{
 		setvbuf(shared_log, NULL, _IOLBF, 0);
 	}
 
@@ -2675,7 +2869,8 @@ init(int argc, char *argv[])
 
 	if (daemonized_tracer && !opt_intr)
 		opt_intr = INTR_BLOCK_TSTP_TOO;
-	if (outfname && argc) {
+	if (outfname && argc)
+	{
 		if (!opt_intr)
 			opt_intr = INTR_NEVER;
 		if (!qflag_short && !quiet_set_updated)
@@ -2684,14 +2879,16 @@ init(int argc, char *argv[])
 	if (!opt_intr)
 		opt_intr = INTR_WHILE_WAIT;
 
-	if (qflag_short) {
-		if (quiet_set_updated) {
+	if (qflag_short)
+	{
+		if (quiet_set_updated)
+		{
 			error_msg_and_die("-q and -e quiet/--quiet cannot"
-					  " be provided simultaneously");
+							  " be provided simultaneously");
 		}
 
-		qualify_quiet(qflag_short == 1 ? qflag_qual :
-			      qflag_short == 2 ? qqflag_qual : qqqflag_qual);
+		qualify_quiet(qflag_short == 1 ? qflag_qual : qflag_short == 2 ? qqflag_qual
+																	   : qqqflag_qual);
 	}
 
 	/*
@@ -2700,9 +2897,10 @@ init(int argc, char *argv[])
 	 * Also we do not need to be protected by them as during interruption
 	 * in the startup_child() mode we kill the spawned process anyway.
 	 */
-	if (argc) {
+	if (argc)
+	{
 		char **new_environ = make_env(environ, env_changes,
-					      env_change_count);
+									  env_change_count);
 		free(env_changes);
 
 		startup_child(argv, new_environ);
@@ -2718,7 +2916,8 @@ init(int argc, char *argv[])
 
 	set_sighandler(SIGTTOU, SIG_IGN, NULL);
 	set_sighandler(SIGTTIN, SIG_IGN, NULL);
-	if (opt_intr != INTR_ANYWHERE) {
+	if (opt_intr != INTR_ANYWHERE)
+	{
 		if (opt_intr == INTR_BLOCK_TSTP_TOO)
 			set_sighandler(SIGTSTP, SIG_IGN, NULL);
 		/*
@@ -2748,7 +2947,7 @@ init(int argc, char *argv[])
 	 * -p PID1,PID2: yes (there are already more than one pid)
 	 */
 	print_pid_pfx = outfname && !output_separately &&
-		((followfork && !output_separately) || nprocs > 1);
+					((followfork && !output_separately) || nprocs > 1);
 }
 
 static struct tcb *
@@ -2767,7 +2966,8 @@ pid2tcb(const int pid)
 	if (tcp && tcp->pid == pid)
 		return tcp;
 
-	for (unsigned int i = 0; i < tcbtabsize; ++i) {
+	for (unsigned int i = 0; i < tcbtabsize; ++i)
+	{
 		tcp = tcbtab[i];
 		if (tcp->pid == pid)
 			return *ptcp = tcp;
@@ -2785,12 +2985,14 @@ cleanup(int fatal_sig)
 	if (!fatal_sig)
 		fatal_sig = SIGTERM;
 
-	for (i = 0; i < tcbtabsize; i++) {
+	for (i = 0; i < tcbtabsize; i++)
+	{
 		tcp = tcbtab[i];
 		if (!tcp->pid)
 			continue;
 		debug_func_msg("looking at pid %u", tcp->pid);
-		if (tcp->pid == strace_child) {
+		if (tcp->pid == strace_child)
+		{
 			kill(tcp->pid, SIGCONT);
 			kill(tcp->pid, fatal_sig);
 		}
@@ -2807,30 +3009,31 @@ interrupt(int sig)
 static void
 print_debug_info(const int pid, int status)
 {
-	const unsigned int event = (unsigned int) status >> 16;
-	char buf[sizeof("WIFEXITED,exitcode=%u") + sizeof(int)*3 /*paranoia:*/ + 16];
-	char evbuf[sizeof(",EVENT_VFORK_DONE (%u)") + sizeof(int)*3 /*paranoia:*/ + 16];
+	const unsigned int event = (unsigned int)status >> 16;
+	char buf[sizeof("WIFEXITED,exitcode=%u") + sizeof(int) * 3 /*paranoia:*/ + 16];
+	char evbuf[sizeof(",EVENT_VFORK_DONE (%u)") + sizeof(int) * 3 /*paranoia:*/ + 16];
 
 	strcpy(buf, "???");
 	if (WIFSIGNALED(status))
 		xsprintf(buf, "WIFSIGNALED,%ssig=%s",
-				WCOREDUMP(status) ? "core," : "",
-				sprintsigname(WTERMSIG(status)));
+				 WCOREDUMP(status) ? "core," : "",
+				 sprintsigname(WTERMSIG(status)));
 	if (WIFEXITED(status))
 		xsprintf(buf, "WIFEXITED,exitcode=%u", WEXITSTATUS(status));
 	if (WIFSTOPPED(status))
 		xsprintf(buf, "WIFSTOPPED,sig=%s",
-			 sprintsigname(WSTOPSIG(status)));
+				 sprintsigname(WSTOPSIG(status)));
 	evbuf[0] = '\0';
-	if (event != 0) {
+	if (event != 0)
+	{
 		static const char *const event_names[] = {
 			[PTRACE_EVENT_CLONE] = "CLONE",
-			[PTRACE_EVENT_FORK]  = "FORK",
+			[PTRACE_EVENT_FORK] = "FORK",
 			[PTRACE_EVENT_VFORK] = "VFORK",
 			[PTRACE_EVENT_VFORK_DONE] = "VFORK_DONE",
-			[PTRACE_EVENT_EXEC]  = "EXEC",
-			[PTRACE_EVENT_EXIT]  = "EXIT",
-			[PTRACE_EVENT_SECCOMP]  = "SECCOMP",
+			[PTRACE_EVENT_EXEC] = "EXEC",
+			[PTRACE_EVENT_EXIT] = "EXIT",
+			[PTRACE_EVENT_SECCOMP] = "SECCOMP",
 			/* [PTRACE_EVENT_STOP (=128)] would make biggish array */
 		};
 		const char *e = "??";
@@ -2846,13 +3049,16 @@ print_debug_info(const int pid, int status)
 static struct tcb *
 maybe_allocate_tcb(const int pid, int status)
 {
-	if (!WIFSTOPPED(status)) {
-		if (detach_on_execve && pid == strace_child) {
+	if (!WIFSTOPPED(status))
+	{
+		if (detach_on_execve && pid == strace_child)
+		{
 			/* example: strace -bexecve sh -c 'exec true' */
 			strace_child = 0;
 			return NULL;
 		}
-		if (!is_number_in_set(QUIET_EXIT, quiet_set)) {
+		if (!is_number_in_set(QUIET_EXIT, quiet_set))
+		{
 			/*
 			 * This can happen if we inherited an unknown child.
 			 * Example: (sleep 1 & exec strace true)
@@ -2861,14 +3067,17 @@ maybe_allocate_tcb(const int pid, int status)
 		}
 		return NULL;
 	}
-	if (followfork) {
+	if (followfork)
+	{
 		/* We assume it's a fork/vfork/clone child */
 		struct tcb *tcp = alloctcb(pid);
 		after_successful_attach(tcp, post_attach_sigstop);
 		if (!is_number_in_set(QUIET_ATTACH, quiet_set))
 			error_msg("Process %d attached", pid);
 		return tcp;
-	} else {
+	}
+	else
+	{
 		/*
 		 * This can happen if a clone call misused CLONE_PTRACE itself.
 		 *
@@ -2908,14 +3117,15 @@ maybe_switch_tcbs(struct tcb *tcp, const int pid)
 	/* Avoid truncation in pid2tcb() param passing */
 	if (old_pid <= 0 || old_pid == pid)
 		return NULL;
-	if ((unsigned long) old_pid > UINT_MAX)
+	if ((unsigned long)old_pid > UINT_MAX)
 		return NULL;
 	struct tcb *execve_thread = pid2tcb(old_pid);
 	/* It should be !NULL, but I feel paranoid */
 	if (!execve_thread)
 		return NULL;
 
-	if (execve_thread->curcol != 0) {
+	if (execve_thread->curcol != 0)
+	{
 		/*
 		 * One case we are here is -ff, try
 		 * "strace -oLOG -ff test/threaded_execve".
@@ -2929,7 +3139,8 @@ maybe_switch_tcbs(struct tcb *tcp, const int pid)
 	FILE *fp = execve_thread->outf;
 	execve_thread->outf = tcp->outf;
 	tcp->outf = fp;
-	if (execve_thread->staged_output_data || tcp->staged_output_data) {
+	if (execve_thread->staged_output_data || tcp->staged_output_data)
+	{
 		struct staged_output_data *staged_output_data;
 
 		staged_output_data = execve_thread->staged_output_data;
@@ -2945,11 +3156,13 @@ maybe_switch_tcbs(struct tcb *tcp, const int pid)
 	/* Switch to the thread, reusing leader's outfile and pid */
 	tcp = execve_thread;
 	tcp->pid = pid;
-	if (cflag != CFLAG_ONLY_STATS) {
-		if (!is_number_in_set(QUIET_THREAD_EXECVE, quiet_set)) {
+	if (cflag != CFLAG_ONLY_STATS)
+	{
+		if (!is_number_in_set(QUIET_THREAD_EXECVE, quiet_set))
+		{
 			printleader(tcp);
 			tprintf("+++ superseded by execve in pid %lu +++\n",
-				old_pid);
+					old_pid);
 			line_ended();
 		}
 		/*
@@ -2978,17 +3191,18 @@ maybe_switch_current_tcp(void)
 static void
 print_signalled(struct tcb *tcp, const int pid, int status)
 {
-	if (pid == strace_child) {
+	if (pid == strace_child)
+	{
 		exit_code = 0x100 | WTERMSIG(status);
 		strace_child = 0;
 	}
 
-	if (cflag != CFLAG_ONLY_STATS
-	    && is_number_in_set(WTERMSIG(status), signal_set)) {
+	if (cflag != CFLAG_ONLY_STATS && is_number_in_set(WTERMSIG(status), signal_set))
+	{
 		printleader(tcp);
 		tprintf("+++ killed by %s %s+++\n",
-			sprintsigname(WTERMSIG(status)),
-			WCOREDUMP(status) ? "(core dumped) " : "");
+				sprintsigname(WTERMSIG(status)),
+				WCOREDUMP(status) ? "(core dumped) " : "");
 		line_ended();
 	}
 }
@@ -2996,13 +3210,15 @@ print_signalled(struct tcb *tcp, const int pid, int status)
 static void
 print_exited(struct tcb *tcp, const int pid, int status)
 {
-	if (pid == strace_child) {
+	if (pid == strace_child)
+	{
 		exit_code = WEXITSTATUS(status);
 		strace_child = 0;
 	}
 
 	if (cflag != CFLAG_ONLY_STATS &&
-	    !is_number_in_set(QUIET_EXIT, quiet_set)) {
+		!is_number_in_set(QUIET_EXIT, quiet_set))
+	{
 		printleader(tcp);
 		tprintf("+++ exited with %d +++\n", WEXITSTATUS(status));
 		line_ended();
@@ -3012,15 +3228,16 @@ print_exited(struct tcb *tcp, const int pid, int status)
 static void
 print_stopped(struct tcb *tcp, const siginfo_t *si, const unsigned int sig)
 {
-	if (cflag != CFLAG_ONLY_STATS
-	    && !hide_log(tcp)
-	    && is_number_in_set(sig, signal_set)) {
+	if (cflag != CFLAG_ONLY_STATS && !hide_log(tcp) && is_number_in_set(sig, signal_set))
+	{
 		printleader(tcp);
-		if (si) {
+		if (si)
+		{
 			tprintf("--- %s ", sprintsigname(sig));
 			printsiginfo(tcp, si);
 			tprints(" ---\n");
-		} else
+		}
+		else
 			tprintf("--- stopped by %s ---\n", sprintsigname(sig));
 		line_ended();
 
@@ -3038,11 +3255,14 @@ startup_tcb(struct tcb *tcp)
 
 	tcp->flags &= ~TCB_STARTUP;
 
-	if (!use_seize) {
+	if (!use_seize)
+	{
 		debug_msg("setting opts 0x%x on pid %d",
-			  ptrace_setoptions, tcp->pid);
-		if (ptrace(PTRACE_SETOPTIONS, tcp->pid, NULL, ptrace_setoptions) < 0) {
-			if (errno != ESRCH) {
+				  ptrace_setoptions, tcp->pid);
+		if (ptrace(PTRACE_SETOPTIONS, tcp->pid, NULL, ptrace_setoptions) < 0)
+		{
+			if (errno != ESRCH)
+			{
 				/* Should never happen, really */
 				perror_msg_and_die("PTRACE_SETOPTIONS");
 			}
@@ -3052,7 +3272,8 @@ startup_tcb(struct tcb *tcp)
 	if ((tcp->flags & TCB_GRABBED) && (get_scno(tcp) == 1))
 		tcp->s_prev_ent = tcp->s_ent;
 
-	if (cflag) {
+	if (cflag)
+	{
 		tcp->atime = tcp->stime;
 	}
 }
@@ -3060,13 +3281,13 @@ startup_tcb(struct tcb *tcp)
 static void
 print_event_exit(struct tcb *tcp)
 {
-	if (entering(tcp) || filtered(tcp) || hide_log(tcp)
-	    || cflag == CFLAG_ONLY_STATS) {
+	if (entering(tcp) || filtered(tcp) || hide_log(tcp) || cflag == CFLAG_ONLY_STATS)
+	{
 		return;
 	}
 
-	if (!output_separately && printing_tcp && printing_tcp != tcp
-	    && printing_tcp->curcol != 0) {
+	if (!output_separately && printing_tcp && printing_tcp != tcp && printing_tcp->curcol != 0)
+	{
 		set_current_tcp(printing_tcp);
 		tprints(" <unfinished ...>\n");
 		flush_tcp_output(printing_tcp);
@@ -3076,7 +3297,8 @@ print_event_exit(struct tcb *tcp)
 
 	print_syscall_resume(tcp);
 
-	if (!(tcp->sys_func_rval & RVAL_DECODED)) {
+	if (!(tcp->sys_func_rval & RVAL_DECODED))
+	{
 		/*
 		 * The decoder has probably decided to print something
 		 * on exiting syscall which is not going to happen.
@@ -3088,7 +3310,8 @@ print_event_exit(struct tcb *tcp)
 	tprints(") ");
 	tabto();
 	tprints("= ?\n");
-	if (!is_complete_set(status_set, NUMBER_OF_STATUSES)) {
+	if (!is_complete_set(status_set, NUMBER_OF_STATUSES))
+	{
 		bool publish = is_number_in_set(STATUS_UNFINISHED, status_set);
 		strace_close_memstream(tcp, publish);
 	}
@@ -3130,10 +3353,11 @@ free_trace_wait_data(struct tcb_wait_data *wd)
 static void
 tcb_wait_tab_check_size(const size_t size)
 {
-	while (size >= tcb_wait_tab_size) {
+	while (size >= tcb_wait_tab_size)
+	{
 		tcb_wait_tab = xgrowarray(tcb_wait_tab,
-					  &tcb_wait_tab_size,
-					  sizeof(tcb_wait_tab[0]));
+								  &tcb_wait_tab_size,
+								  sizeof(tcb_wait_tab[0]));
 	}
 }
 
@@ -3156,7 +3380,8 @@ next_event(void)
 	static struct tcb *extra_tcp;
 	static size_t wait_extra_data_idx;
 	/* Handle the extra tcb event.  */
-	if (extra_tcp) {
+	if (extra_tcp)
+	{
 		tcp = extra_tcp;
 		extra_tcp = NULL;
 		tcp->wait_data_idx = wait_extra_data_idx;
@@ -3176,7 +3401,8 @@ next_event(void)
 	 *  19923 +++ exited with 1 +++
 	 * Exiting only when wait() returns ECHILD works better.
 	 */
-	if (popen_pid != 0) {
+	if (popen_pid != 0)
+	{
 		/* However, if -o|logger is in use, we can't do that.
 		 * Can work around that by double-forking the logger,
 		 * but that loses the ability to wait for its completion
@@ -3218,7 +3444,8 @@ next_event(void)
 	 * Block the signal handler for the delay timer
 	 * iff it was unblocked earlier.
 	 */
-	if (unblock_delay_timer) {
+	if (unblock_delay_timer)
+	{
 		sigprocmask(SIG_BLOCK, &timer_set, NULL);
 
 		if (restart_failed)
@@ -3233,10 +3460,12 @@ next_event(void)
 	 * nothing more to wait for for now), or a second event for some tcb
 	 * appears (which may happen if a tracee was SIGKILL'ed, for example).
 	 */
-	for (;;) {
+	for (;;)
+	{
 		struct tcb_wait_data *wd;
 
-		if (pid < 0) {
+		if (pid < 0)
+		{
 			if (wait_errno == EINTR)
 				break;
 			if (wait_nohang)
@@ -3254,7 +3483,8 @@ next_event(void)
 		if (!pid)
 			break;
 
-		if (pid == popen_pid) {
+		if (pid == popen_pid)
+		{
 			if (!WIFSTOPPED(status))
 				popen_pid = 0;
 			break;
@@ -3266,13 +3496,15 @@ next_event(void)
 		/* Look up 'pid' in our table. */
 		tcp = pid2tcb(pid);
 
-		if (!tcp) {
+		if (!tcp)
+		{
 			tcp = maybe_allocate_tcb(pid, status);
 			if (!tcp)
 				goto next_event_wait_next;
 		}
 
-		if (cflag) {
+		if (cflag)
+		{
 			tcp->stime.tv_sec = ru.ru_stime.tv_sec;
 			tcp->stime.tv_nsec = ru.ru_stime.tv_usec * 1000;
 		}
@@ -3284,11 +3516,16 @@ next_event(void)
 		init_trace_wait_data(wd);
 		wd->status = status;
 
-		if (WIFSIGNALED(status)) {
+		if (WIFSIGNALED(status))
+		{
 			wd->te = TE_SIGNALLED;
-		} else if (WIFEXITED(status)) {
+		}
+		else if (WIFEXITED(status))
+		{
 			wd->te = TE_EXITED;
-		} else {
+		}
+		else
+		{
 			/*
 			 * As WCONTINUED flag has not been specified to wait4,
 			 * it cannot be WIFCONTINUED(status), so the only case
@@ -3296,9 +3533,10 @@ next_event(void)
 			 */
 
 			const unsigned int sig = WSTOPSIG(status);
-			const unsigned int event = (unsigned int) status >> 16;
+			const unsigned int event = (unsigned int)status >> 16;
 
-			switch (event) {
+			switch (event)
+			{
 			case 0:
 				/*
 				 * Is this post-attach SIGSTOP?
@@ -3308,14 +3546,20 @@ next_event(void)
 				 * just before the process takes a signal.
 				 */
 				if (sig == SIGSTOP &&
-				    (tcp->flags & TCB_IGNORE_ONE_SIGSTOP)) {
+					(tcp->flags & TCB_IGNORE_ONE_SIGSTOP))
+				{
 					debug_func_msg("ignored SIGSTOP on "
-						       "pid %d", tcp->pid);
+								   "pid %d",
+								   tcp->pid);
 					tcp->flags &= ~TCB_IGNORE_ONE_SIGSTOP;
 					wd->te = TE_RESTART;
-				} else if (sig == syscall_trap_sig) {
+				}
+				else if (sig == syscall_trap_sig)
+				{
 					wd->te = TE_SYSCALL_STOP;
-				} else {
+				}
+				else
+				{
 					/*
 					 * True if tracee is stopped by signal
 					 * (as opposed to "tracee received
@@ -3325,10 +3569,10 @@ next_event(void)
 					 * We can get ESRCH instead, you know...
 					 */
 					bool stopped = ptrace(PTRACE_GETSIGINFO,
-						pid, 0, &wd->si) < 0;
+										  pid, 0, &wd->si) < 0;
 
 					wd->te = stopped ? TE_GROUP_STOP
-							 : TE_SIGNAL_DELIVERY_STOP;
+									 : TE_SIGNAL_DELIVERY_STOP;
 				}
 				break;
 			case PTRACE_EVENT_STOP:
@@ -3336,7 +3580,8 @@ next_event(void)
 				 * PTRACE_INTERRUPT-stop or group-stop.
 				 * PTRACE_INTERRUPT-stop has sig == SIGTRAP here.
 				 */
-				switch (sig) {
+				switch (sig)
+				{
 				case SIGSTOP:
 				case SIGTSTP:
 				case SIGTTIN:
@@ -3348,13 +3593,13 @@ next_event(void)
 				}
 				break;
 			case PTRACE_EVENT_EXEC:
-					/*
+				/*
 					 * TODO: shouldn't we check for
 					 * errno == EINVAL here, too?
 					 * We can get ESRCH instead, you know...
 					 */
 				if (ptrace(PTRACE_GETEVENTMSG, pid, NULL,
-				    &wd->msg) < 0)
+						   &wd->msg) < 0)
 					wd->msg = 0;
 
 				wd->te = TE_STOP_BEFORE_EXECVE;
@@ -3372,13 +3617,17 @@ next_event(void)
 
 		if (!wd->te)
 			error_func_msg("Tracing event hasn't been determined "
-				       "for pid %d, status %0#x", pid, status);
+						   "for pid %d, status %0#x",
+						   pid, status);
 
-		if (!list_is_empty(&tcp->wait_list)) {
+		if (!list_is_empty(&tcp->wait_list))
+		{
 			wait_extra_data_idx = wait_tab_pos;
 			extra_tcp = tcp;
 			debug_func_msg("queued extra pid %d", tcp->pid);
-		} else {
+		}
+		else
+		{
 			tcp->wait_data_idx = wait_tab_pos;
 			list_append(&pending_tcps, &tcp->wait_list);
 			debug_func_msg("queued pid %d", tcp->pid);
@@ -3389,7 +3638,7 @@ next_event(void)
 		if (extra_tcp)
 			break;
 
-next_event_wait_next:
+	next_event_wait_next:
 		pid = wait4(-1, &status, __WALL | WNOHANG, (cflag ? &ru : NULL));
 		wait_errno = errno;
 		wait_nohang = true;
@@ -3398,13 +3647,16 @@ next_event_wait_next:
 next_event_get_tcp:
 	elem = list_remove_head(&pending_tcps);
 
-	if (!elem) {
+	if (!elem)
+	{
 		tcb_wait_tab_check_size(0);
 		memset(tcb_wait_tab, 0, sizeof(*tcb_wait_tab));
 		tcb_wait_tab->te = TE_NEXT;
 
 		return tcb_wait_tab;
-	} else {
+	}
+	else
+	{
 		tcp = list_elem(elem, struct tcb, wait_list);
 		debug_func_msg("dequeued pid %d", tcp->pid);
 	}
@@ -3425,9 +3677,11 @@ next_event_exit:
 static int
 trace_syscall(struct tcb *tcp, unsigned int *sig)
 {
-	if (entering(tcp)) {
+	if (entering(tcp))
+	{
 		int res = syscall_entering_decode(tcp);
-		switch (res) {
+		switch (res)
+		{
 		case 0:
 			return 0;
 		case 1:
@@ -3435,10 +3689,13 @@ trace_syscall(struct tcb *tcp, unsigned int *sig)
 		}
 		syscall_entering_finish(tcp, res);
 		return res;
-	} else {
+	}
+	else
+	{
 		struct timespec ts = {};
 		int res = syscall_exiting_decode(tcp, &ts);
-		if (res != 0) {
+		if (res != 0)
+		{
 			res = syscall_exiting_trace(tcp, &ts, res);
 		}
 		syscall_exiting_finish(tcp);
@@ -3464,7 +3721,8 @@ dispatch_event(const struct tcb_wait_data *wd)
 	else
 		restart_op = PTRACE_SYSCALL;
 
-	switch (te) {
+	switch (te)
+	{
 	case TE_BREAK:
 		return false;
 
@@ -3475,7 +3733,8 @@ dispatch_event(const struct tcb_wait_data *wd)
 		break;
 
 	case TE_SECCOMP:
-		if (!has_seccomp_filter(current_tcp)) {
+		if (!has_seccomp_filter(current_tcp))
+		{
 			/*
 			 * We don't know if forks/clones have a seccomp filter
 			 * when they are created, but we can detect it when we
@@ -3489,14 +3748,16 @@ dispatch_event(const struct tcb_wait_data *wd)
 			break;
 		}
 
-		if (seccomp_before_sysentry) {
+		if (seccomp_before_sysentry)
+		{
 			restart_op = PTRACE_SYSCALL;
 			break;
 		}
 		ATTRIBUTE_FALLTHROUGH;
 
 	case TE_SYSCALL_STOP:
-		if (trace_syscall(current_tcp, &restart_sig) < 0) {
+		if (trace_syscall(current_tcp, &restart_sig) < 0)
+		{
 			/*
 			 * ptrace() failed in trace_syscall().
 			 * Likely a result of process disappearing mid-flight.
@@ -3510,7 +3771,8 @@ dispatch_event(const struct tcb_wait_data *wd)
 			 */
 			return true;
 		}
-		if (has_seccomp_filter(current_tcp)) {
+		if (has_seccomp_filter(current_tcp))
+		{
 			/*
 			 * Syscall and seccomp stops can happen in different
 			 * orders depending on kernel.  strace tests this in
@@ -3561,7 +3823,8 @@ dispatch_event(const struct tcb_wait_data *wd)
 	case TE_GROUP_STOP:
 		restart_sig = WSTOPSIG(status);
 		print_stopped(current_tcp, NULL, restart_sig);
-		if (use_seize) {
+		if (use_seize)
+		{
 			/*
 			 * This ends ptrace-stop, but does *not* end group-stop.
 			 * This makes stopping signals work properly on straced
@@ -3589,27 +3852,33 @@ dispatch_event(const struct tcb_wait_data *wd)
 		 * and all the following syscall state tracking is screwed up
 		 * otherwise.
 		 */
-		if (!maybe_switch_current_tcp() && entering(current_tcp)) {
+		if (!maybe_switch_current_tcp() && entering(current_tcp))
+		{
 			int ret;
 
 			error_msg("Stray PTRACE_EVENT_EXEC from pid %d"
-				  ", trying to recover...",
-				  current_tcp->pid);
+					  ", trying to recover...",
+					  current_tcp->pid);
 
 			current_tcp->flags |= TCB_RECOVERING;
 			ret = trace_syscall(current_tcp, &restart_sig);
 			current_tcp->flags &= ~TCB_RECOVERING;
 
-			if (ret < 0) {
+			if (ret < 0)
+			{
 				/* The reason is described in TE_SYSCALL_STOP */
 				return true;
 			}
 		}
 
-		if (detach_on_execve) {
-			if (current_tcp->flags & TCB_SKIP_DETACH_ON_FIRST_EXEC) {
+		if (detach_on_execve)
+		{
+			if (current_tcp->flags & TCB_SKIP_DETACH_ON_FIRST_EXEC)
+			{
 				current_tcp->flags &= ~TCB_SKIP_DETACH_ON_FIRST_EXEC;
-			} else {
+			}
+			else
+			{
 				detach(current_tcp); /* do "-b execve" thingy */
 				return true;
 			}
@@ -3626,17 +3895,20 @@ dispatch_event(const struct tcb_wait_data *wd)
 		return false;
 
 	/* If the process is being delayed, do not ptrace_restart just yet */
-	if (syscall_delayed(current_tcp)) {
+	if (syscall_delayed(current_tcp))
+	{
 		if (current_tcp->delayed_wait_data)
 			error_func_msg("pid %d has delayed wait data set"
-				       " already", current_tcp->pid);
+						   " already",
+						   current_tcp->pid);
 
 		current_tcp->delayed_wait_data = copy_trace_wait_data(wd);
 
 		return true;
 	}
 
-	if (ptrace_restart(restart_op, current_tcp, restart_sig) < 0) {
+	if (ptrace_restart(restart_op, current_tcp, restart_sig) < 0)
+	{
 		/* Note: ptrace_restart emitted error message */
 		exit_code = 1;
 		return false;
@@ -3649,9 +3921,10 @@ restart_delayed_tcb(struct tcb *const tcp)
 {
 	struct tcb_wait_data *wd = tcp->delayed_wait_data;
 
-	if (!wd) {
+	if (!wd)
+	{
 		error_func_msg("No delayed wait data found for pid %d",
-			       tcp->pid);
+					   tcp->pid);
 		wd = init_trace_wait_data(alloca(trace_wait_data_size(tcp)));
 	}
 
@@ -3680,18 +3953,24 @@ restart_delayed_tcbs(void)
 
 	clock_gettime(CLOCK_MONOTONIC, &ts_now);
 
-	for (size_t i = 0; i < tcbtabsize; i++) {
+	for (size_t i = 0; i < tcbtabsize; i++)
+	{
 		struct tcb *tcp = tcbtab[i];
 
-		if (tcp->pid && syscall_delayed(tcp)) {
-			if (ts_cmp(&ts_now, &tcp->delay_expiration_time) > 0) {
+		if (tcp->pid && syscall_delayed(tcp))
+		{
+			if (ts_cmp(&ts_now, &tcp->delay_expiration_time) > 0)
+			{
 				if (!restart_delayed_tcb(tcp))
 					return false;
-			} else {
+			}
+			else
+			{
 				/* Check whether this tcb is the next.  */
 				if (!tcp_next ||
-				    ts_cmp(&tcp_next->delay_expiration_time,
-					   &tcp->delay_expiration_time) > 0) {
+					ts_cmp(&tcp_next->delay_expiration_time,
+						   &tcp->delay_expiration_time) > 0)
+				{
 					tcp_next = tcp;
 				}
 			}
@@ -3736,14 +4015,17 @@ terminate(void)
 	fflush(NULL);
 	if (shared_log != stderr)
 		fclose(shared_log);
-	if (popen_pid) {
+	if (popen_pid)
+	{
 		while (waitpid(popen_pid, NULL, 0) < 0 && errno == EINTR)
 			;
 	}
-	if (sig) {
+	if (sig)
+	{
 		exit_code = 0x100 | sig;
 	}
-	if (exit_code > 0xff) {
+	if (exit_code > 0xff)
+	{
 		/* Avoid potential core file clobbering.  */
 		struct_rlimit rlim = {0, 0};
 		set_rlimit(RLIMIT_CORE, &rlim);
@@ -3768,15 +4050,1963 @@ terminate(void)
 	exit(exit_code);
 }
 
-int
-main(int argc, char *argv[])
+const char *callname(long call);
+
+static siginfo_t wait_trap(pid_t chld)
+{
+	siginfo_t si;
+	if (waitid(P_PID, chld, &si, WEXITED | WSTOPPED) != 0)
+		err(1, "waitid");
+	if (si.si_pid != chld)
+		err(1, "got unexpected pid in event\n");
+	if (si.si_code != CLD_TRAPPED)
+	{
+		char buf[256];
+		sprintf(buf, "got unexpected event type %d\n", si.si_code);
+		err(1, buf);
+	}
+
+	return si;
+}
+
+int main(int argc, char *argv[])
 {
 	setlocale(LC_ALL, "");
-	init(argc, argv);
+	// init(argc, argv);
 
-	exit_code = !nprocs;
+	pid_t chld;
 
-	while (dispatch_event(next_event()))
-		;
-	terminate();
+	if (argc == 1)
+	{
+		exit(0);
+	}
+
+	char *chargs[argc];
+	int i = 0;
+
+	while (i < argc - 1)
+	{
+		chargs[i] = argv[i + 1];
+		i++;
+	}
+	chargs[i] = NULL;
+
+	chld = fork();
+	if (chld == 0)
+	{
+		ptrace(PTRACE_TRACEME, 0, NULL, NULL);
+		execvp(chargs[0], chargs);
+	}
+	else
+	{
+		int status;
+
+		/* Wait for SIGSTOP. */
+		if (waitpid(chld, &status, 0) != chld || !WIFSTOPPED(status))
+			err(1, "waitpid");
+
+		struct tcb *tcp = alloctcb(chld);
+		after_successful_attach(tcp, post_attach_sigstop);
+
+		for (;;)
+		{
+			struct user_regs_struct regs;
+
+			printf("[RUN]\tPTRACE_SYSCALL before syscall\n");
+			ptrace(PTRACE_SYSCALL, chld, NULL, NULL);
+			wait_trap(chld);
+
+			printf("[RUN]\tPTRACE_GETREGS before syscall\n");
+			ptrace(PTRACE_GETREGS, chld, NULL, &regs);
+
+			printf("system call %d %s from pid %d\n", regs.user_syscall_nr, callname(regs.user_syscall_nr), chld);
+
+			tcp->u_arg[0] = regs.rdi;
+			tcp->u_arg[1] = regs.rsi;
+			tcp->u_arg[2] = regs.rdx;
+			tcp->u_arg[3] = regs.r10;
+			tcp->u_arg[4] = regs.r8;
+			tcp->u_arg[5] = regs.r9;
+
+			// get_scno(tcp); TODO
+
+			if (regs.user_syscall_nr == SYS_openat)
+			{
+				// printf("before print_dirfd\n");
+				// print_dirfd(tcp, tcp->u_arg[0]);
+				// tprint_arg_next();
+				// /* pathname */
+				// printf("before printpath\n");
+				// printpath(tcp, tcp->u_arg[1]);
+
+				char path[256];
+				extract_path(tcp, tcp->u_arg[1], 255, path);
+				printf("[before openat] PATH: >%s<\n", path);
+
+				if (strlen(path) == strlen("src/mount.c") && !strncmp(path, "src/mount.c", strlen("src/mount.c")))
+				{
+					// const char *new_path = "REWRITE";
+					// upoken(tcp, tcp->u_arg[1], strlen(new_path), new_path);
+					// This not working:
+					// regs.user_syscall_nr = SYS_getpid;
+					// printf("[RUN]\tPTRACE_SETREGS before syscall: reset to getpid\n");
+					// ptrace(PTRACE_SETREGS, chld, NULL, &regs);
+				}
+
+				// tprint_arg_next();
+				// /* flags */
+				// printf("before tprint_open_modes\n");
+				// tprint_open_modes(tcp->u_arg[2]);
+			}
+
+			if (regs.user_syscall_nr == SYS_open)
+			{
+				char path[256];
+				extract_path(tcp, tcp->u_arg[0], 255, path);
+				printf("[before openat] PATH: >%s<\n", path);
+			}
+
+			printf("[RUN]\tPTRACE_SYSCALL after syscall\n");
+			ptrace(PTRACE_SYSCALL, chld, NULL, NULL);
+			wait_trap(chld);
+
+			printf("[RUN]\tPTRACE_GETREGS after syscall\n");
+			ptrace(PTRACE_GETREGS, chld, NULL, &regs);
+
+			if (regs.user_syscall_nr == SYS_openat)
+			{
+				printf("[after openat] rc=%d\n", regs.user_ax);
+
+				char path[256];
+				extract_path(tcp, tcp->u_arg[0], 255, path);
+				printf("[after openat] PATH: >%s<\n", path);
+
+				if (strlen(path) == strlen("src/mount.c") && !strncmp(path, "src/mount.c", strlen("src/mount.c")))
+				{
+					regs.user_syscall_nr = SYS_getpid;
+					regs.user_ax = 1123;
+					printf("[RUN]\tPTRACE_SETREGS after syscall\n");
+					ptrace(PTRACE_SETREGS, chld, NULL, &regs);
+				}
+			}
+
+			if (regs.user_syscall_nr == SYS_exit)
+			{
+				printf("exit!\n");
+				break;
+			}
+
+			// regs.user_syscall_nr = SYS_getpid;
+			// ptrace(PTRACE_SETREGS, chld, 0, &regs);
+			// ptrace(PTRACE_CONT, chld, 0, 0);
+			// wait_trap(chld);
+
+			usleep(50000);
+		}
+	}
+
+	printf("DONE!\n");
+	// exit_code = !nprocs;
+	// while (dispatch_event(next_event()))
+	// 	;
+	// terminate();
+}
+
+/* callname */
+
+static char *callname_buf[256];
+
+const char *callname(long call)
+{
+	switch (call)
+	{
+
+#ifdef SYS__sysctl
+	case SYS__sysctl:
+		return "_sysctl";
+#endif
+
+#ifdef SYS_access
+	case SYS_access:
+		return "access";
+#endif
+
+#ifdef SYS_acct
+	case SYS_acct:
+		return "acct";
+#endif
+
+#ifdef SYS_add_key
+	case SYS_add_key:
+		return "add_key";
+#endif
+
+#ifdef SYS_adjtimex
+	case SYS_adjtimex:
+		return "adjtimex";
+#endif
+
+#ifdef SYS_afs_syscall
+	case SYS_afs_syscall:
+		return "afs_syscall";
+#endif
+
+#ifdef SYS_alarm
+	case SYS_alarm:
+		return "alarm";
+#endif
+
+#ifdef SYS_brk
+	case SYS_brk:
+		return "brk";
+#endif
+
+#ifdef SYS_capget
+	case SYS_capget:
+		return "capget";
+#endif
+
+#ifdef SYS_capset
+	case SYS_capset:
+		return "capset";
+#endif
+
+#ifdef SYS_chdir
+	case SYS_chdir:
+		return "chdir";
+#endif
+
+#ifdef SYS_chmod
+	case SYS_chmod:
+		return "chmod";
+#endif
+
+#ifdef SYS_chown
+	case SYS_chown:
+		return "chown";
+#endif
+
+#ifdef SYS_chroot
+	case SYS_chroot:
+		return "chroot";
+#endif
+
+#ifdef SYS_clock_getres
+	case SYS_clock_getres:
+		return "clock_getres";
+#endif
+
+#ifdef SYS_clock_gettime
+	case SYS_clock_gettime:
+		return "clock_gettime";
+#endif
+
+#ifdef SYS_clock_nanosleep
+	case SYS_clock_nanosleep:
+		return "clock_nanosleep";
+#endif
+
+#ifdef SYS_clock_settime
+	case SYS_clock_settime:
+		return "clock_settime";
+#endif
+
+#ifdef SYS_clone
+	case SYS_clone:
+		return "clone";
+#endif
+
+#ifdef SYS_close
+	case SYS_close:
+		return "close";
+#endif
+
+#ifdef SYS_creat
+	case SYS_creat:
+		return "creat";
+#endif
+
+#ifdef SYS_create_module
+	case SYS_create_module:
+		return "create_module";
+#endif
+
+#ifdef SYS_delete_module
+	case SYS_delete_module:
+		return "delete_module";
+#endif
+
+#ifdef SYS_dup
+	case SYS_dup:
+		return "dup";
+#endif
+
+#ifdef SYS_dup2
+	case SYS_dup2:
+		return "dup2";
+#endif
+
+#ifdef SYS_epoll_create
+	case SYS_epoll_create:
+		return "epoll_create";
+#endif
+
+#ifdef SYS_epoll_ctl
+	case SYS_epoll_ctl:
+		return "epoll_ctl";
+#endif
+
+#ifdef SYS_epoll_pwait
+	case SYS_epoll_pwait:
+		return "epoll_pwait";
+#endif
+
+#ifdef SYS_epoll_wait
+	case SYS_epoll_wait:
+		return "epoll_wait";
+#endif
+
+#ifdef SYS_eventfd
+	case SYS_eventfd:
+		return "eventfd";
+#endif
+
+#ifdef SYS_execve
+	case SYS_execve:
+		return "execve";
+#endif
+
+#ifdef SYS_exit
+	case SYS_exit:
+		return "exit";
+#endif
+
+#ifdef SYS_exit_group
+	case SYS_exit_group:
+		return "exit_group";
+#endif
+
+#ifdef SYS_faccessat
+	case SYS_faccessat:
+		return "faccessat";
+#endif
+
+#ifdef SYS_fadvise64
+	case SYS_fadvise64:
+		return "fadvise64";
+#endif
+
+#ifdef SYS_fallocate
+	case SYS_fallocate:
+		return "fallocate";
+#endif
+
+#ifdef SYS_fchdir
+	case SYS_fchdir:
+		return "fchdir";
+#endif
+
+#ifdef SYS_fchmod
+	case SYS_fchmod:
+		return "fchmod";
+#endif
+
+#ifdef SYS_fchmodat
+	case SYS_fchmodat:
+		return "fchmodat";
+#endif
+
+#ifdef SYS_fchown
+	case SYS_fchown:
+		return "fchown";
+#endif
+
+#ifdef SYS_fchownat
+	case SYS_fchownat:
+		return "fchownat";
+#endif
+
+#ifdef SYS_fcntl
+	case SYS_fcntl:
+		return "fcntl";
+#endif
+
+#ifdef SYS_fdatasync
+	case SYS_fdatasync:
+		return "fdatasync";
+#endif
+
+#ifdef SYS_fgetxattr
+	case SYS_fgetxattr:
+		return "fgetxattr";
+#endif
+
+#ifdef SYS_flistxattr
+	case SYS_flistxattr:
+		return "flistxattr";
+#endif
+
+#ifdef SYS_flock
+	case SYS_flock:
+		return "flock";
+#endif
+
+#ifdef SYS_fork
+	case SYS_fork:
+		return "fork";
+#endif
+
+#ifdef SYS_fremovexattr
+	case SYS_fremovexattr:
+		return "fremovexattr";
+#endif
+
+#ifdef SYS_fsetxattr
+	case SYS_fsetxattr:
+		return "fsetxattr";
+#endif
+
+#ifdef SYS_fstat
+	case SYS_fstat:
+		return "fstat";
+#endif
+
+#ifdef SYS_fstatfs
+	case SYS_fstatfs:
+		return "fstatfs";
+#endif
+
+#ifdef SYS_fsync
+	case SYS_fsync:
+		return "fsync";
+#endif
+
+#ifdef SYS_ftruncate
+	case SYS_ftruncate:
+		return "ftruncate";
+#endif
+
+#ifdef SYS_futex
+	case SYS_futex:
+		return "futex";
+#endif
+
+#ifdef SYS_futimesat
+	case SYS_futimesat:
+		return "futimesat";
+#endif
+
+#ifdef SYS_get_kernel_syms
+	case SYS_get_kernel_syms:
+		return "get_kernel_syms";
+#endif
+
+#ifdef SYS_get_mempolicy
+	case SYS_get_mempolicy:
+		return "get_mempolicy";
+#endif
+
+#ifdef SYS_get_robust_list
+	case SYS_get_robust_list:
+		return "get_robust_list";
+#endif
+
+#ifdef SYS_get_thread_area
+	case SYS_get_thread_area:
+		return "get_thread_area";
+#endif
+
+#ifdef SYS_getcwd
+	case SYS_getcwd:
+		return "getcwd";
+#endif
+
+#ifdef SYS_getdents
+	case SYS_getdents:
+		return "getdents";
+#endif
+
+#ifdef SYS_getdents64
+	case SYS_getdents64:
+		return "getdents64";
+#endif
+
+#ifdef SYS_getegid
+	case SYS_getegid:
+		return "getegid";
+#endif
+
+#ifdef SYS_geteuid
+	case SYS_geteuid:
+		return "geteuid";
+#endif
+
+#ifdef SYS_getgid
+	case SYS_getgid:
+		return "getgid";
+#endif
+
+#ifdef SYS_getgroups
+	case SYS_getgroups:
+		return "getgroups";
+#endif
+
+#ifdef SYS_getitimer
+	case SYS_getitimer:
+		return "getitimer";
+#endif
+
+#ifdef SYS_getpgid
+	case SYS_getpgid:
+		return "getpgid";
+#endif
+
+#ifdef SYS_getpgrp
+	case SYS_getpgrp:
+		return "getpgrp";
+#endif
+
+#ifdef SYS_getpid
+	case SYS_getpid:
+		return "getpid";
+#endif
+
+#ifdef SYS_getpmsg
+	case SYS_getpmsg:
+		return "getpmsg";
+#endif
+
+#ifdef SYS_getppid
+	case SYS_getppid:
+		return "getppid";
+#endif
+
+#ifdef SYS_getpriority
+	case SYS_getpriority:
+		return "getpriority";
+#endif
+
+#ifdef SYS_getresgid
+	case SYS_getresgid:
+		return "getresgid";
+#endif
+
+#ifdef SYS_getresuid
+	case SYS_getresuid:
+		return "getresuid";
+#endif
+
+#ifdef SYS_getrlimit
+	case SYS_getrlimit:
+		return "getrlimit";
+#endif
+
+#ifdef SYS_getrusage
+	case SYS_getrusage:
+		return "getrusage";
+#endif
+
+#ifdef SYS_getsid
+	case SYS_getsid:
+		return "getsid";
+#endif
+
+#ifdef SYS_gettid
+	case SYS_gettid:
+		return "gettid";
+#endif
+
+#ifdef SYS_gettimeofday
+	case SYS_gettimeofday:
+		return "gettimeofday";
+#endif
+
+#ifdef SYS_getuid
+	case SYS_getuid:
+		return "getuid";
+#endif
+
+#ifdef SYS_getxattr
+	case SYS_getxattr:
+		return "getxattr";
+#endif
+
+#ifdef SYS_init_module
+	case SYS_init_module:
+		return "init_module";
+#endif
+
+#ifdef SYS_inotify_add_watch
+	case SYS_inotify_add_watch:
+		return "inotify_add_watch";
+#endif
+
+#ifdef SYS_inotify_init
+	case SYS_inotify_init:
+		return "inotify_init";
+#endif
+
+#ifdef SYS_inotify_rm_watch
+	case SYS_inotify_rm_watch:
+		return "inotify_rm_watch";
+#endif
+
+#ifdef SYS_io_cancel
+	case SYS_io_cancel:
+		return "io_cancel";
+#endif
+
+#ifdef SYS_io_destroy
+	case SYS_io_destroy:
+		return "io_destroy";
+#endif
+
+#ifdef SYS_io_getevents
+	case SYS_io_getevents:
+		return "io_getevents";
+#endif
+
+#ifdef SYS_io_setup
+	case SYS_io_setup:
+		return "io_setup";
+#endif
+
+#ifdef SYS_io_submit
+	case SYS_io_submit:
+		return "io_submit";
+#endif
+
+#ifdef SYS_ioctl
+	case SYS_ioctl:
+		return "ioctl";
+#endif
+
+#ifdef SYS_ioperm
+	case SYS_ioperm:
+		return "ioperm";
+#endif
+
+#ifdef SYS_iopl
+	case SYS_iopl:
+		return "iopl";
+#endif
+
+#ifdef SYS_ioprio_get
+	case SYS_ioprio_get:
+		return "ioprio_get";
+#endif
+
+#ifdef SYS_ioprio_set
+	case SYS_ioprio_set:
+		return "ioprio_set";
+#endif
+
+#ifdef SYS_kexec_load
+	case SYS_kexec_load:
+		return "kexec_load";
+#endif
+
+#ifdef SYS_keyctl
+	case SYS_keyctl:
+		return "keyctl";
+#endif
+
+#ifdef SYS_kill
+	case SYS_kill:
+		return "kill";
+#endif
+
+#ifdef SYS_lchown
+	case SYS_lchown:
+		return "lchown";
+#endif
+
+#ifdef SYS_lgetxattr
+	case SYS_lgetxattr:
+		return "lgetxattr";
+#endif
+
+#ifdef SYS_link
+	case SYS_link:
+		return "link";
+#endif
+
+#ifdef SYS_linkat
+	case SYS_linkat:
+		return "linkat";
+#endif
+
+#ifdef SYS_listxattr
+	case SYS_listxattr:
+		return "listxattr";
+#endif
+
+#ifdef SYS_llistxattr
+	case SYS_llistxattr:
+		return "llistxattr";
+#endif
+
+#ifdef SYS_lookup_dcookie
+	case SYS_lookup_dcookie:
+		return "lookup_dcookie";
+#endif
+
+#ifdef SYS_lremovexattr
+	case SYS_lremovexattr:
+		return "lremovexattr";
+#endif
+
+#ifdef SYS_lseek
+	case SYS_lseek:
+		return "lseek";
+#endif
+
+#ifdef SYS_lsetxattr
+	case SYS_lsetxattr:
+		return "lsetxattr";
+#endif
+
+#ifdef SYS_lstat
+	case SYS_lstat:
+		return "lstat";
+#endif
+
+#ifdef SYS_madvise
+	case SYS_madvise:
+		return "madvise";
+#endif
+
+#ifdef SYS_mbind
+	case SYS_mbind:
+		return "mbind";
+#endif
+
+#ifdef SYS_migrate_pages
+	case SYS_migrate_pages:
+		return "migrate_pages";
+#endif
+
+#ifdef SYS_mincore
+	case SYS_mincore:
+		return "mincore";
+#endif
+
+#ifdef SYS_mkdir
+	case SYS_mkdir:
+		return "mkdir";
+#endif
+
+#ifdef SYS_mkdirat
+	case SYS_mkdirat:
+		return "mkdirat";
+#endif
+
+#ifdef SYS_mknod
+	case SYS_mknod:
+		return "mknod";
+#endif
+
+#ifdef SYS_mknodat
+	case SYS_mknodat:
+		return "mknodat";
+#endif
+
+#ifdef SYS_mlock
+	case SYS_mlock:
+		return "mlock";
+#endif
+
+#ifdef SYS_mlockall
+	case SYS_mlockall:
+		return "mlockall";
+#endif
+
+#ifdef SYS_mmap
+	case SYS_mmap:
+		return "mmap";
+#endif
+
+#ifdef SYS_modify_ldt
+	case SYS_modify_ldt:
+		return "modify_ldt";
+#endif
+
+#ifdef SYS_mount
+	case SYS_mount:
+		return "mount";
+#endif
+
+#ifdef SYS_move_pages
+	case SYS_move_pages:
+		return "move_pages";
+#endif
+
+#ifdef SYS_mprotect
+	case SYS_mprotect:
+		return "mprotect";
+#endif
+
+#ifdef SYS_mq_getsetattr
+	case SYS_mq_getsetattr:
+		return "mq_getsetattr";
+#endif
+
+#ifdef SYS_mq_notify
+	case SYS_mq_notify:
+		return "mq_notify";
+#endif
+
+#ifdef SYS_mq_open
+	case SYS_mq_open:
+		return "mq_open";
+#endif
+
+#ifdef SYS_mq_timedreceive
+	case SYS_mq_timedreceive:
+		return "mq_timedreceive";
+#endif
+
+#ifdef SYS_mq_timedsend
+	case SYS_mq_timedsend:
+		return "mq_timedsend";
+#endif
+
+#ifdef SYS_mq_unlink
+	case SYS_mq_unlink:
+		return "mq_unlink";
+#endif
+
+#ifdef SYS_mremap
+	case SYS_mremap:
+		return "mremap";
+#endif
+
+#ifdef SYS_msync
+	case SYS_msync:
+		return "msync";
+#endif
+
+#ifdef SYS_munlock
+	case SYS_munlock:
+		return "munlock";
+#endif
+
+#ifdef SYS_munlockall
+	case SYS_munlockall:
+		return "munlockall";
+#endif
+
+#ifdef SYS_munmap
+	case SYS_munmap:
+		return "munmap";
+#endif
+
+#ifdef SYS_nanosleep
+	case SYS_nanosleep:
+		return "nanosleep";
+#endif
+
+#ifdef SYS_nfsservctl
+	case SYS_nfsservctl:
+		return "nfsservctl";
+#endif
+
+#ifdef SYS_open
+	case SYS_open:
+		return "open";
+#endif
+
+#ifdef SYS_openat
+	case SYS_openat:
+		return "openat";
+#endif
+
+#ifdef SYS_pause
+	case SYS_pause:
+		return "pause";
+#endif
+
+#ifdef SYS_personality
+	case SYS_personality:
+		return "personality";
+#endif
+
+#ifdef SYS_pipe
+	case SYS_pipe:
+		return "pipe";
+#endif
+
+#ifdef SYS_pivot_root
+	case SYS_pivot_root:
+		return "pivot_root";
+#endif
+
+#ifdef SYS_poll
+	case SYS_poll:
+		return "poll";
+#endif
+
+#ifdef SYS_ppoll
+	case SYS_ppoll:
+		return "ppoll";
+#endif
+
+#ifdef SYS_prctl
+	case SYS_prctl:
+		return "prctl";
+#endif
+
+#ifdef SYS_pread64
+	case SYS_pread64:
+		return "pread64";
+#endif
+
+#ifdef SYS_pselect6
+	case SYS_pselect6:
+		return "pselect6";
+#endif
+
+#ifdef SYS_ptrace
+	case SYS_ptrace:
+		return "ptrace";
+#endif
+
+#ifdef SYS_putpmsg
+	case SYS_putpmsg:
+		return "putpmsg";
+#endif
+
+#ifdef SYS_pwrite64
+	case SYS_pwrite64:
+		return "pwrite64";
+#endif
+
+#ifdef SYS_query_module
+	case SYS_query_module:
+		return "query_module";
+#endif
+
+#ifdef SYS_quotactl
+	case SYS_quotactl:
+		return "quotactl";
+#endif
+
+#ifdef SYS_read
+	case SYS_read:
+		return "read";
+#endif
+
+#ifdef SYS_readahead
+	case SYS_readahead:
+		return "readahead";
+#endif
+
+#ifdef SYS_readlink
+	case SYS_readlink:
+		return "readlink";
+#endif
+
+#ifdef SYS_readlinkat
+	case SYS_readlinkat:
+		return "readlinkat";
+#endif
+
+#ifdef SYS_readv
+	case SYS_readv:
+		return "readv";
+#endif
+
+#ifdef SYS_reboot
+	case SYS_reboot:
+		return "reboot";
+#endif
+
+#ifdef SYS_remap_file_pages
+	case SYS_remap_file_pages:
+		return "remap_file_pages";
+#endif
+
+#ifdef SYS_removexattr
+	case SYS_removexattr:
+		return "removexattr";
+#endif
+
+#ifdef SYS_rename
+	case SYS_rename:
+		return "rename";
+#endif
+
+#ifdef SYS_renameat
+	case SYS_renameat:
+		return "renameat";
+#endif
+
+#ifdef SYS_request_key
+	case SYS_request_key:
+		return "request_key";
+#endif
+
+#ifdef SYS_restart_syscall
+	case SYS_restart_syscall:
+		return "restart_syscall";
+#endif
+
+#ifdef SYS_rmdir
+	case SYS_rmdir:
+		return "rmdir";
+#endif
+
+#ifdef SYS_rt_sigaction
+	case SYS_rt_sigaction:
+		return "rt_sigaction";
+#endif
+
+#ifdef SYS_rt_sigpending
+	case SYS_rt_sigpending:
+		return "rt_sigpending";
+#endif
+
+#ifdef SYS_rt_sigprocmask
+	case SYS_rt_sigprocmask:
+		return "rt_sigprocmask";
+#endif
+
+#ifdef SYS_rt_sigqueueinfo
+	case SYS_rt_sigqueueinfo:
+		return "rt_sigqueueinfo";
+#endif
+
+#ifdef SYS_rt_sigreturn
+	case SYS_rt_sigreturn:
+		return "rt_sigreturn";
+#endif
+
+#ifdef SYS_rt_sigsuspend
+	case SYS_rt_sigsuspend:
+		return "rt_sigsuspend";
+#endif
+
+#ifdef SYS_rt_sigtimedwait
+	case SYS_rt_sigtimedwait:
+		return "rt_sigtimedwait";
+#endif
+
+#ifdef SYS_sched_get_priority_max
+	case SYS_sched_get_priority_max:
+		return "sched_get_priority_max";
+#endif
+
+#ifdef SYS_sched_get_priority_min
+	case SYS_sched_get_priority_min:
+		return "sched_get_priority_min";
+#endif
+
+#ifdef SYS_sched_getaffinity
+	case SYS_sched_getaffinity:
+		return "sched_getaffinity";
+#endif
+
+#ifdef SYS_sched_getparam
+	case SYS_sched_getparam:
+		return "sched_getparam";
+#endif
+
+#ifdef SYS_sched_getscheduler
+	case SYS_sched_getscheduler:
+		return "sched_getscheduler";
+#endif
+
+#ifdef SYS_sched_rr_get_interval
+	case SYS_sched_rr_get_interval:
+		return "sched_rr_get_interval";
+#endif
+
+#ifdef SYS_sched_setaffinity
+	case SYS_sched_setaffinity:
+		return "sched_setaffinity";
+#endif
+
+#ifdef SYS_sched_setparam
+	case SYS_sched_setparam:
+		return "sched_setparam";
+#endif
+
+#ifdef SYS_sched_setscheduler
+	case SYS_sched_setscheduler:
+		return "sched_setscheduler";
+#endif
+
+#ifdef SYS_sched_yield
+	case SYS_sched_yield:
+		return "sched_yield";
+#endif
+
+#ifdef SYS_select
+	case SYS_select:
+		return "select";
+#endif
+
+#ifdef SYS_sendfile
+	case SYS_sendfile:
+		return "sendfile";
+#endif
+
+#ifdef SYS_set_mempolicy
+	case SYS_set_mempolicy:
+		return "set_mempolicy";
+#endif
+
+#ifdef SYS_set_robust_list
+	case SYS_set_robust_list:
+		return "set_robust_list";
+#endif
+
+#ifdef SYS_set_thread_area
+	case SYS_set_thread_area:
+		return "set_thread_area";
+#endif
+
+#ifdef SYS_set_tid_address
+	case SYS_set_tid_address:
+		return "set_tid_address";
+#endif
+
+#ifdef SYS_setdomainname
+	case SYS_setdomainname:
+		return "setdomainname";
+#endif
+
+#ifdef SYS_setfsgid
+	case SYS_setfsgid:
+		return "setfsgid";
+#endif
+
+#ifdef SYS_setfsuid
+	case SYS_setfsuid:
+		return "setfsuid";
+#endif
+
+#ifdef SYS_setgid
+	case SYS_setgid:
+		return "setgid";
+#endif
+
+#ifdef SYS_setgroups
+	case SYS_setgroups:
+		return "setgroups";
+#endif
+
+#ifdef SYS_sethostname
+	case SYS_sethostname:
+		return "sethostname";
+#endif
+
+#ifdef SYS_setitimer
+	case SYS_setitimer:
+		return "setitimer";
+#endif
+
+#ifdef SYS_setpgid
+	case SYS_setpgid:
+		return "setpgid";
+#endif
+
+#ifdef SYS_setpriority
+	case SYS_setpriority:
+		return "setpriority";
+#endif
+
+#ifdef SYS_setregid
+	case SYS_setregid:
+		return "setregid";
+#endif
+
+#ifdef SYS_setresgid
+	case SYS_setresgid:
+		return "setresgid";
+#endif
+
+#ifdef SYS_setresuid
+	case SYS_setresuid:
+		return "setresuid";
+#endif
+
+#ifdef SYS_setreuid
+	case SYS_setreuid:
+		return "setreuid";
+#endif
+
+#ifdef SYS_setrlimit
+	case SYS_setrlimit:
+		return "setrlimit";
+#endif
+
+#ifdef SYS_setsid
+	case SYS_setsid:
+		return "setsid";
+#endif
+
+#ifdef SYS_settimeofday
+	case SYS_settimeofday:
+		return "settimeofday";
+#endif
+
+#ifdef SYS_setuid
+	case SYS_setuid:
+		return "setuid";
+#endif
+
+#ifdef SYS_setxattr
+	case SYS_setxattr:
+		return "setxattr";
+#endif
+
+#ifdef SYS_sigaltstack
+	case SYS_sigaltstack:
+		return "sigaltstack";
+#endif
+
+#ifdef SYS_signalfd
+	case SYS_signalfd:
+		return "signalfd";
+#endif
+
+#ifdef SYS_splice
+	case SYS_splice:
+		return "splice";
+#endif
+
+#ifdef SYS_stat
+	case SYS_stat:
+		return "stat";
+#endif
+
+#ifdef SYS_statfs
+	case SYS_statfs:
+		return "statfs";
+#endif
+
+#ifdef SYS_swapoff
+	case SYS_swapoff:
+		return "swapoff";
+#endif
+
+#ifdef SYS_swapon
+	case SYS_swapon:
+		return "swapon";
+#endif
+
+#ifdef SYS_symlink
+	case SYS_symlink:
+		return "symlink";
+#endif
+
+#ifdef SYS_symlinkat
+	case SYS_symlinkat:
+		return "symlinkat";
+#endif
+
+#ifdef SYS_sync
+	case SYS_sync:
+		return "sync";
+#endif
+
+#ifdef SYS_sync_file_range
+	case SYS_sync_file_range:
+		return "sync_file_range";
+#endif
+
+#ifdef SYS_sysfs
+	case SYS_sysfs:
+		return "sysfs";
+#endif
+
+#ifdef SYS_sysinfo
+	case SYS_sysinfo:
+		return "sysinfo";
+#endif
+
+#ifdef SYS_syslog
+	case SYS_syslog:
+		return "syslog";
+#endif
+
+#ifdef SYS_tee
+	case SYS_tee:
+		return "tee";
+#endif
+
+#ifdef SYS_tgkill
+	case SYS_tgkill:
+		return "tgkill";
+#endif
+
+#ifdef SYS_time
+	case SYS_time:
+		return "time";
+#endif
+
+#ifdef SYS_timer_create
+	case SYS_timer_create:
+		return "timer_create";
+#endif
+
+#ifdef SYS_timer_delete
+	case SYS_timer_delete:
+		return "timer_delete";
+#endif
+
+#ifdef SYS_timer_getoverrun
+	case SYS_timer_getoverrun:
+		return "timer_getoverrun";
+#endif
+
+#ifdef SYS_timer_gettime
+	case SYS_timer_gettime:
+		return "timer_gettime";
+#endif
+
+#ifdef SYS_timer_settime
+	case SYS_timer_settime:
+		return "timer_settime";
+#endif
+
+#ifdef SYS_timerfd_create
+	case SYS_timerfd_create:
+		return "timerfd_create";
+#endif
+
+#ifdef SYS_timerfd_gettime
+	case SYS_timerfd_gettime:
+		return "timerfd_gettime";
+#endif
+
+#ifdef SYS_timerfd_settime
+	case SYS_timerfd_settime:
+		return "timerfd_settime";
+#endif
+
+#ifdef SYS_times
+	case SYS_times:
+		return "times";
+#endif
+
+#ifdef SYS_tkill
+	case SYS_tkill:
+		return "tkill";
+#endif
+
+#ifdef SYS_truncate
+	case SYS_truncate:
+		return "truncate";
+#endif
+
+#ifdef SYS_umask
+	case SYS_umask:
+		return "umask";
+#endif
+
+#ifdef SYS_umount2
+	case SYS_umount2:
+		return "umount2";
+#endif
+
+#ifdef SYS_uname
+	case SYS_uname:
+		return "uname";
+#endif
+
+#ifdef SYS_unlink
+	case SYS_unlink:
+		return "unlink";
+#endif
+
+#ifdef SYS_unlinkat
+	case SYS_unlinkat:
+		return "unlinkat";
+#endif
+
+#ifdef SYS_unshare
+	case SYS_unshare:
+		return "unshare";
+#endif
+
+#ifdef SYS_uselib
+	case SYS_uselib:
+		return "uselib";
+#endif
+
+#ifdef SYS_ustat
+	case SYS_ustat:
+		return "ustat";
+#endif
+
+#ifdef SYS_utime
+	case SYS_utime:
+		return "utime";
+#endif
+
+#ifdef SYS_utimensat
+	case SYS_utimensat:
+		return "utimensat";
+#endif
+
+#ifdef SYS_utimes
+	case SYS_utimes:
+		return "utimes";
+#endif
+
+#ifdef SYS_vfork
+	case SYS_vfork:
+		return "vfork";
+#endif
+
+#ifdef SYS_vhangup
+	case SYS_vhangup:
+		return "vhangup";
+#endif
+
+#ifdef SYS_vmsplice
+	case SYS_vmsplice:
+		return "vmsplice";
+#endif
+
+#ifdef SYS_vserver
+	case SYS_vserver:
+		return "vserver";
+#endif
+
+#ifdef SYS_wait4
+	case SYS_wait4:
+		return "wait4";
+#endif
+
+#ifdef SYS_waitid
+	case SYS_waitid:
+		return "waitid";
+#endif
+
+#ifdef SYS_write
+	case SYS_write:
+		return "write";
+#endif
+
+#ifdef SYS_writev
+	case SYS_writev:
+		return "writev";
+#endif
+
+#ifdef SYS_accept
+	case SYS_accept:
+		return "accept";
+#endif
+
+#ifdef SYS_arch_prctl
+	case SYS_arch_prctl:
+		return "arch_prctl";
+#endif
+
+#ifdef SYS_bind
+	case SYS_bind:
+		return "bind";
+#endif
+
+#ifdef SYS_connect
+	case SYS_connect:
+		return "connect";
+#endif
+
+#ifdef SYS_epoll_ctl_old
+	case SYS_epoll_ctl_old:
+		return "epoll_ctl_old";
+#endif
+
+#ifdef SYS_epoll_wait_old
+	case SYS_epoll_wait_old:
+		return "epoll_wait_old";
+#endif
+
+#ifdef SYS_getpeername
+	case SYS_getpeername:
+		return "getpeername";
+#endif
+
+#ifdef SYS_getsockname
+	case SYS_getsockname:
+		return "getsockname";
+#endif
+
+#ifdef SYS_getsockopt
+	case SYS_getsockopt:
+		return "getsockopt";
+#endif
+
+#ifdef SYS_listen
+	case SYS_listen:
+		return "listen";
+#endif
+
+#ifdef SYS_msgctl
+	case SYS_msgctl:
+		return "msgctl";
+#endif
+
+#ifdef SYS_msgget
+	case SYS_msgget:
+		return "msgget";
+#endif
+
+#ifdef SYS_msgrcv
+	case SYS_msgrcv:
+		return "msgrcv";
+#endif
+
+#ifdef SYS_msgsnd
+	case SYS_msgsnd:
+		return "msgsnd";
+#endif
+
+#ifdef SYS_newfstatat
+	case SYS_newfstatat:
+		return "newfstatat";
+#endif
+
+#ifdef SYS_recvfrom
+	case SYS_recvfrom:
+		return "recvfrom";
+#endif
+
+#ifdef SYS_recvmsg
+	case SYS_recvmsg:
+		return "recvmsg";
+#endif
+
+#ifdef SYS_security
+	case SYS_security:
+		return "security";
+#endif
+
+#ifdef SYS_semctl
+	case SYS_semctl:
+		return "semctl";
+#endif
+
+#ifdef SYS_semget
+	case SYS_semget:
+		return "semget";
+#endif
+
+#ifdef SYS_semop
+	case SYS_semop:
+		return "semop";
+#endif
+
+#ifdef SYS_semtimedop
+	case SYS_semtimedop:
+		return "semtimedop";
+#endif
+
+#ifdef SYS_sendmsg
+	case SYS_sendmsg:
+		return "sendmsg";
+#endif
+
+#ifdef SYS_sendto
+	case SYS_sendto:
+		return "sendto";
+#endif
+
+#ifdef SYS_setsockopt
+	case SYS_setsockopt:
+		return "setsockopt";
+#endif
+
+#ifdef SYS_shmat
+	case SYS_shmat:
+		return "shmat";
+#endif
+
+#ifdef SYS_shmctl
+	case SYS_shmctl:
+		return "shmctl";
+#endif
+
+#ifdef SYS_shmdt
+	case SYS_shmdt:
+		return "shmdt";
+#endif
+
+#ifdef SYS_shmget
+	case SYS_shmget:
+		return "shmget";
+#endif
+
+#ifdef SYS_shutdown
+	case SYS_shutdown:
+		return "shutdown";
+#endif
+
+#ifdef SYS_socket
+	case SYS_socket:
+		return "socket";
+#endif
+
+#ifdef SYS_socketpair
+	case SYS_socketpair:
+		return "socketpair";
+#endif
+
+#ifdef SYS_tuxcall
+	case SYS_tuxcall:
+		return "tuxcall";
+#endif
+
+#ifdef SYS__llseek
+	case SYS__llseek:
+		return "_llseek";
+#endif
+
+#ifdef SYS__newselect
+	case SYS__newselect:
+		return "_newselect";
+#endif
+
+#ifdef SYS_bdflush
+	case SYS_bdflush:
+		return "bdflush";
+#endif
+
+#ifdef SYS_break
+	case SYS_break:
+		return "break";
+#endif
+
+#ifdef SYS_chown32
+	case SYS_chown32:
+		return "chown32";
+#endif
+
+#ifdef SYS_fadvise64_64
+	case SYS_fadvise64_64:
+		return "fadvise64_64";
+#endif
+
+#ifdef SYS_fchown32
+	case SYS_fchown32:
+		return "fchown32";
+#endif
+
+#ifdef SYS_fcntl64
+	case SYS_fcntl64:
+		return "fcntl64";
+#endif
+
+#ifdef SYS_fstat64
+	case SYS_fstat64:
+		return "fstat64";
+#endif
+
+#ifdef SYS_fstatat64
+	case SYS_fstatat64:
+		return "fstatat64";
+#endif
+
+#ifdef SYS_fstatfs64
+	case SYS_fstatfs64:
+		return "fstatfs64";
+#endif
+
+#ifdef SYS_ftime
+	case SYS_ftime:
+		return "ftime";
+#endif
+
+#ifdef SYS_ftruncate64
+	case SYS_ftruncate64:
+		return "ftruncate64";
+#endif
+
+#ifdef SYS_getcpu
+	case SYS_getcpu:
+		return "getcpu";
+#endif
+
+#ifdef SYS_getegid32
+	case SYS_getegid32:
+		return "getegid32";
+#endif
+
+#ifdef SYS_geteuid32
+	case SYS_geteuid32:
+		return "geteuid32";
+#endif
+
+#ifdef SYS_getgid32
+	case SYS_getgid32:
+		return "getgid32";
+#endif
+
+#ifdef SYS_getgroups32
+	case SYS_getgroups32:
+		return "getgroups32";
+#endif
+
+#ifdef SYS_getresgid32
+	case SYS_getresgid32:
+		return "getresgid32";
+#endif
+
+#ifdef SYS_getresuid32
+	case SYS_getresuid32:
+		return "getresuid32";
+#endif
+
+#ifdef SYS_getuid32
+	case SYS_getuid32:
+		return "getuid32";
+#endif
+
+#ifdef SYS_gtty
+	case SYS_gtty:
+		return "gtty";
+#endif
+
+#ifdef SYS_idle
+	case SYS_idle:
+		return "idle";
+#endif
+
+#ifdef SYS_ipc
+	case SYS_ipc:
+		return "ipc";
+#endif
+
+#ifdef SYS_lchown32
+	case SYS_lchown32:
+		return "lchown32";
+#endif
+
+#ifdef SYS_lock
+	case SYS_lock:
+		return "lock";
+#endif
+
+#ifdef SYS_lstat64
+	case SYS_lstat64:
+		return "lstat64";
+#endif
+
+#ifdef SYS_madvise1
+	case SYS_madvise1:
+		return "madvise1";
+#endif
+
+#ifdef SYS_mmap2
+	case SYS_mmap2:
+		return "mmap2";
+#endif
+
+#ifdef SYS_mpx
+	case SYS_mpx:
+		return "mpx";
+#endif
+
+#ifdef SYS_nice
+	case SYS_nice:
+		return "nice";
+#endif
+
+#ifdef SYS_oldfstat
+	case SYS_oldfstat:
+		return "oldfstat";
+#endif
+
+#ifdef SYS_oldlstat
+	case SYS_oldlstat:
+		return "oldlstat";
+#endif
+
+#ifdef SYS_oldolduname
+	case SYS_oldolduname:
+		return "oldolduname";
+#endif
+
+#ifdef SYS_oldstat
+	case SYS_oldstat:
+		return "oldstat";
+#endif
+
+#ifdef SYS_olduname
+	case SYS_olduname:
+		return "olduname";
+#endif
+
+#ifdef SYS_prof
+	case SYS_prof:
+		return "prof";
+#endif
+
+#ifdef SYS_profil
+	case SYS_profil:
+		return "profil";
+#endif
+
+#ifdef SYS_readdir
+	case SYS_readdir:
+		return "readdir";
+#endif
+
+#ifdef SYS_sendfile64
+	case SYS_sendfile64:
+		return "sendfile64";
+#endif
+
+#ifdef SYS_setfsgid32
+	case SYS_setfsgid32:
+		return "setfsgid32";
+#endif
+
+#ifdef SYS_setfsuid32
+	case SYS_setfsuid32:
+		return "setfsuid32";
+#endif
+
+#ifdef SYS_setgid32
+	case SYS_setgid32:
+		return "setgid32";
+#endif
+
+#ifdef SYS_setgroups32
+	case SYS_setgroups32:
+		return "setgroups32";
+#endif
+
+#ifdef SYS_setregid32
+	case SYS_setregid32:
+		return "setregid32";
+#endif
+
+#ifdef SYS_setresgid32
+	case SYS_setresgid32:
+		return "setresgid32";
+#endif
+
+#ifdef SYS_setresuid32
+	case SYS_setresuid32:
+		return "setresuid32";
+#endif
+
+#ifdef SYS_setreuid32
+	case SYS_setreuid32:
+		return "setreuid32";
+#endif
+
+#ifdef SYS_setuid32
+	case SYS_setuid32:
+		return "setuid32";
+#endif
+
+#ifdef SYS_sgetmask
+	case SYS_sgetmask:
+		return "sgetmask";
+#endif
+
+#ifdef SYS_sigaction
+	case SYS_sigaction:
+		return "sigaction";
+#endif
+
+#ifdef SYS_signal
+	case SYS_signal:
+		return "signal";
+#endif
+
+#ifdef SYS_sigpending
+	case SYS_sigpending:
+		return "sigpending";
+#endif
+
+#ifdef SYS_sigprocmask
+	case SYS_sigprocmask:
+		return "sigprocmask";
+#endif
+
+#ifdef SYS_sigreturn
+	case SYS_sigreturn:
+		return "sigreturn";
+#endif
+
+#ifdef SYS_sigsuspend
+	case SYS_sigsuspend:
+		return "sigsuspend";
+#endif
+
+#ifdef SYS_socketcall
+	case SYS_socketcall:
+		return "socketcall";
+#endif
+
+#ifdef SYS_ssetmask
+	case SYS_ssetmask:
+		return "ssetmask";
+#endif
+
+#ifdef SYS_stat64
+	case SYS_stat64:
+		return "stat64";
+#endif
+
+#ifdef SYS_statfs64
+	case SYS_statfs64:
+		return "statfs64";
+#endif
+
+#ifdef SYS_stime
+	case SYS_stime:
+		return "stime";
+#endif
+
+#ifdef SYS_stty
+	case SYS_stty:
+		return "stty";
+#endif
+
+#ifdef SYS_truncate64
+	case SYS_truncate64:
+		return "truncate64";
+#endif
+
+#ifdef SYS_ugetrlimit
+	case SYS_ugetrlimit:
+		return "ugetrlimit";
+#endif
+
+#ifdef SYS_ulimit
+	case SYS_ulimit:
+		return "ulimit";
+#endif
+
+#ifdef SYS_umount
+	case SYS_umount:
+		return "umount";
+#endif
+
+#ifdef SYS_vm86
+	case SYS_vm86:
+		return "vm86";
+#endif
+
+#ifdef SYS_vm86old
+	case SYS_vm86old:
+		return "vm86old";
+#endif
+
+#ifdef SYS_waitpid
+	case SYS_waitpid:
+		return "waitpid";
+#endif
+
+	default:
+		return "unknown";
+	}
 }
